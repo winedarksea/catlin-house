@@ -129,7 +129,8 @@ ax.set_title("Fixed Solar Reflector Geometry")
 ax.grid(True)
 ax.legend(loc="upper right", fontsize=8)
 
-plt.show()
+# plt.show()
+plt.savefig("solar_reflector.png", dpi=300, bbox_inches="tight")
 
 print(f"Mirror tilt = {tilt_down:.3f}°")
 print(f"Mirror bottom drop = {mirror_drop:.3f} in")

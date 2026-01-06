@@ -22,7 +22,7 @@ layers = [
     ("4.5\" rigid foam insulation (polyiso, eps)\n(stagger/tape seams; tape-compatible facer)", 18, '//'),
     ("1\" mineral wool board\n(continuous; protects/levels deck)", 4, '\\\\'),
     ("Taped OSB roof deck (PRIMARY AIR BARRIER)\n(tape seams; seal penetrations)", 5, '--'),
-    ("I-joist / Trim joist cavity insulation (typ.)\nR-20 mineral wool batts or dense-pack cellulose\nNo interior Class I/II vapor barrier", 22, ''),
+    ("I-joist / cavity insulation (typ.)\nR-20 mineral wool batts or dense-pack cellulose\nNo interior Class I/II vapor barrier", 22, ''),
     ("Interior finish (e.g., gypsum board)\nSeal penetrations for airtightness", 6, 'oo'),
 ]
 

@@ -88,6 +88,24 @@ def _pipe(ax, x, y, d, *, fc="#A7B5C6", ec="black", lw=1.1, z=6):
     ax.add_patch(Circle((x, y), radius=d / 2 - 0.25, facecolor=fc, edgecolor="none", alpha=0.85, zorder=z + 1))
 
 
+def _dotted_pipe(ax, p0, p1, d, *, z=15):
+    p0 = np.asarray(p0, dtype=float)
+    p1 = np.asarray(p1, dtype=float)
+    ax.plot(
+        [p0[0], p1[0]],
+        [p0[1], p1[1]],
+        color="black",
+        linewidth=1.6,
+        linestyle=(0, (1.0, 2.2)),
+        zorder=z,
+    )
+    for p in (p0, p1):
+        ax.add_patch(Circle((p[0], p[1]), radius=d / 2, facecolor="white", edgecolor="black", lw=1.0, zorder=z + 1))
+        ax.add_patch(
+            Circle((p[0], p[1]), radius=d / 2 - 0.25, facecolor="#A7B5C6", edgecolor="none", alpha=0.85, zorder=z + 2)
+        )
+
+
 def _rebar_L(ax, x_cover_from_face, x_face, y_base_bot, y_base_top, y_wall_top, *, hook=14.0, z=20):
     """
     Draw a schematic L-bar: vertical along wall, hooks into base slab.
@@ -97,11 +115,17 @@ def _rebar_L(ax, x_cover_from_face, x_face, y_base_bot, y_base_top, y_wall_top, 
     """
 
     x_vert = x_face + x_cover_from_face
-    y_hook = y_base_bot + 4.0
+    y_hook = y_base_bot + 3.0
+    x_hook = x_vert + np.sign(x_cover_from_face) * hook
 
-    ax.plot([x_vert, x_vert], [y_base_top, y_wall_top - 6.0], color="black", linewidth=1.2, zorder=z)
-    ax.plot([x_vert, x_vert + np.sign(x_cover_from_face) * hook], [y_hook, y_hook], color="black", linewidth=1.2, zorder=z)
-    ax.add_patch(Circle((x_vert, y_base_top + 24.0), radius=0.7, facecolor="black", edgecolor="none", zorder=z + 1))
+    ax.plot([x_vert, x_vert, x_hook], [y_wall_top - 6.0, y_hook, y_hook], color="black", linewidth=1.6, zorder=z)
+    ax.add_patch(Circle((x_vert, y_base_top + 24.0), radius=0.85, facecolor="black", edgecolor="none", zorder=z + 1))
+
+
+def _rebar_h(ax, x0, x1, y, *, z=20):
+    ax.plot([x0, x1], [y, y], color="black", linewidth=1.4, zorder=z)
+    for x in (x0 + 10.0, x1 - 10.0):
+        ax.add_patch(Circle((x, y), radius=0.75, facecolor="black", edgecolor="none", zorder=z + 1))
 
 
 def main():
@@ -113,6 +137,7 @@ def main():
     # Colors
     COL_CONC = "#BFBFBF"
     COL_GRAVEL = "#9C9C9C"
+    COL_AGG = "#7F7F7F"
     COL_SOIL = "#D2B48C"
     COL_XPS = "#A7D7C5"
     COL_BLOCK = "#A0A0A0"
@@ -136,13 +161,18 @@ def main():
     xps_thk = 1.0  # under outer heel arm
 
     drain_diam = 4.0
-    drain_stone_h = 18.0
     drain_stone_w = 24.0
+    drain_backfill_h = backfill_h
+
+    compacted_agg_thk = 18.0
+    compacted_agg_extra = 6.0
 
     # Coordinate system: sunken garden "interior" grade is y=0.
     y_int_grade = 0.0
     y_base_top = y_int_grade
     y_base_bot = y_base_top - base_thk
+    y_agg_top = y_base_bot
+    y_agg_bot = y_agg_top - compacted_agg_thk
     y_wall_top = y_base_top + wall_h
 
     # Two walls: inner faces at x=0 and x=inner_clear
@@ -172,13 +202,39 @@ def main():
     # -----------------------
     # Concrete: stems + bases
     # -----------------------
+    # Compacted aggregate base (extends under stem and beyond footing edges)
+    _rect(
+        ax,
+        xL_base0 - compacted_agg_extra,
+        y_agg_bot,
+        (xL_base1 - xL_base0) + 2 * compacted_agg_extra,
+        compacted_agg_thk,
+        fc=COL_AGG,
+        ec="black",
+        lw=1.0,
+        hatch="..",
+        z=2,
+    )
+    _rect(
+        ax,
+        xR_base0 - compacted_agg_extra,
+        y_agg_bot,
+        (xR_base1 - xR_base0) + 2 * compacted_agg_extra,
+        compacted_agg_thk,
+        fc=COL_AGG,
+        ec="black",
+        lw=1.0,
+        hatch="..",
+        z=2,
+    )
+
     # Left wall stem and base
     _rect(ax, xL_out, y_base_top, stem_thk, wall_h, fc=COL_CONC, z=5)
-    _rect(ax, xL_base0, y_base_bot, xL_base1 - xL_base0, base_thk, fc=COL_CONC, hatch="..", z=4)
+    _rect(ax, xL_base0, y_base_bot, xL_base1 - xL_base0, base_thk, fc=COL_CONC, z=4)
 
     # Right wall stem and base
     _rect(ax, xR_in, y_base_top, stem_thk, wall_h, fc=COL_CONC, z=5)
-    _rect(ax, xR_base0, y_base_bot, xR_base1 - xR_base0, base_thk, fc=COL_CONC, hatch="..", z=4)
+    _rect(ax, xR_base0, y_base_bot, xR_base1 - xR_base0, base_thk, fc=COL_CONC, z=4)
 
     # Interior grade line (sunken garden floor)
     ax.plot([xL_in, xR_in], [y_int_grade, y_int_grade], color="black", linewidth=1.2, zorder=30)
@@ -278,23 +334,23 @@ def main():
     _rect(ax, xR_block0, backfill_h, xR_block1 - xR_block0, raised_bed_h, fc=COL_BLOCK, hatch="++", lw=1.1, z=6)
 
     # -----------------------
-    # Drain tile + granular backfill (geotextile wrapped) on soil side at bottom
+    # Granular backfill + drain tile (geotextile wrapped) on soil side (extends above footing)
     # -----------------------
-    # Left drain stone envelope
+    # Left drain stone/backfill zone
     xL_drain0 = xL_out - drain_stone_w
     xL_drain1 = xL_out
-    y_drain0 = y_base_bot
-    y_drain1 = y_base_bot + drain_stone_h
+    y_drain0 = y_base_top
+    y_drain1 = drain_backfill_h
     _rect(ax, xL_drain0, y_drain0, xL_drain1 - xL_drain0, y_drain1 - y_drain0, fc=COL_GRAVEL, hatch="o", lw=0.9, z=2)
     _rect(ax, xL_drain0 - 1.2, y_drain0 - 1.2, (xL_drain1 - xL_drain0) + 2.4, (y_drain1 - y_drain0) + 2.4, fc="none", ec="black", ls="--", lw=1.0, z=3)
-    _pipe(ax, xL_out - drain_stone_w * 0.55, y_base_bot + drain_diam * 0.75, drain_diam)
+    _pipe(ax, xL_out - drain_stone_w * 0.55, y_base_top + drain_diam * 1.0, drain_diam)
 
-    # Right drain stone envelope
+    # Right drain stone/backfill zone
     xR_drain0 = xR_out
     xR_drain1 = xR_out + drain_stone_w
     _rect(ax, xR_drain0, y_drain0, xR_drain1 - xR_drain0, y_drain1 - y_drain0, fc=COL_GRAVEL, hatch="o", lw=0.9, z=2)
     _rect(ax, xR_drain0 - 1.2, y_drain0 - 1.2, (xR_drain1 - xR_drain0) + 2.4, (y_drain1 - y_drain0) + 2.4, fc="none", ec="black", ls="--", lw=1.0, z=3)
-    _pipe(ax, xR_out + drain_stone_w * 0.55, y_base_bot + drain_diam * 0.75, drain_diam)
+    _pipe(ax, xR_out + drain_stone_w * 0.55, y_base_top + drain_diam * 1.0, drain_diam)
 
     # -----------------------
     # Waterproofing / dampproofing on soil-facing side of wall
@@ -304,13 +360,13 @@ def main():
     _rect(ax, xR_out, y_base_top, mem_thk, wall_h, fc=COL_MEM, ec="black", lw=0.8, z=7)
 
     # -----------------------
-    # Weep holes (schematic) through wall near base
+    # Weep holes: sloped dotted pipes through full wall depth
     # -----------------------
     weep_y = y_base_top + 18.0
-    weep_h = 2.0
-    weep_w = 4.0
-    _rect(ax, xL_out + stem_thk - weep_w, weep_y, weep_w, weep_h, fc="white", ec="black", lw=1.0, z=12)
-    _rect(ax, xR_in, weep_y, weep_w, weep_h, fc="white", ec="black", lw=1.0, z=12)
+    weep_pipe_d = 2.0
+    weep_rise = 2.0
+    _dotted_pipe(ax, (xL_in, weep_y), (xL_out, weep_y + weep_rise), weep_pipe_d, z=12)
+    _dotted_pipe(ax, (xR_in, weep_y), (xR_out, weep_y + weep_rise), weep_pipe_d, z=12)
 
     # -----------------------
     # Rebar: L-bar from base into wall; vertical along soil face with 3" cover
@@ -320,6 +376,9 @@ def main():
     _rebar_L(ax, +cover, xL_out, y_base_bot, y_base_top, y_wall_top)
     # Right wall soil face is xR_out (outer face to the right)
     _rebar_L(ax, -cover, xR_out, y_base_bot, y_base_top, y_wall_top)
+    # Footing steel (schematic, continuous)
+    _rebar_h(ax, xL_base0 + 6.0, xL_base1 - 6.0, y_base_bot + 4.0)
+    _rebar_h(ax, xR_base0 + 6.0, xR_base1 - 6.0, y_base_bot + 4.0)
 
     # -----------------------
     # Dimensions
@@ -328,6 +387,9 @@ def main():
     _dim_v(ax, y_base_top, y_wall_top, xR_block1 + 22.0, '10\'-0" retaining wall height')
     _dim_v(ax, y_base_top, backfill_h, xR_block1 + 12.0, '7\'-0" soil backfill (typ.)')
     _dim_v(ax, backfill_h, y_wall_top, xR_block1 + 12.0, '3\'-0" raised garden soil')
+    dim_foot_y = (y_base_bot - toe_gravel_depth) - 10.0
+    _dim_h(ax, xL_base0, xL_out, dim_foot_y, '3\'-0" heel')
+    _dim_h(ax, xL_in, xL_base1, dim_foot_y, '3\'-0" toe')
 
     # -----------------------
     # Leaders / callouts
@@ -343,7 +405,15 @@ def main():
         ax,
         (xL_base0 + 14.0, y_base_bot + base_thk / 2),
         (xL_block0 - 80.0, y_base_bot - 16.0),
-        '12" thick base slab\n(3\' heel + 12" stem + 3\' toe)',
+        '12" thick footing/base slab\nextends 3\'-0" beyond each wall face (typ.)',
+        ha="right",
+        va="top",
+    )
+    _leader(
+        ax,
+        (xL_base0 + 10.0, y_agg_bot + compacted_agg_thk / 2),
+        (xL_out - 86.0, y_agg_bot - 10.0),
+        "Compacted crushed stone base\nextends under stem + footing (typ.)",
         ha="right",
         va="top",
     )
@@ -356,22 +426,28 @@ def main():
     )
     _leader(
         ax,
-        (xL_out - drain_stone_w * 0.55, y_base_bot + drain_diam * 0.75),
-        (xL_block0 - 80.0, y_base_bot + 6.0),
-        '4" perf drain tile (typ.)\nsloped to daylight / sump',
+        (xL_out + cover, y_base_top + 60.0),
+        (xL_in + 56.0, y_wall_top - 18.0),
+        'Primary vertical stem steel\nat soil face (3" cover)\nL-dowels into footing (typ.)',
+    )
+    _leader(
+        ax,
+        (xL_out - drain_stone_w * 0.55, y_base_top + drain_diam * 1.0),
+        (xL_block0 - 80.0, y_base_top + 6.0),
+        '4" perf drain tile (typ.)\nplace at base of drain stone; slope to daylight / sump',
         ha="right",
     )
     _leader(
         ax,
-        (xL_out - drain_stone_w / 2, y_base_bot + drain_stone_h / 2),
-        (xL_block0 - 80.0, y_base_bot + 22.0),
-        "Granular backfill / drain stone\ngeotextile-wrapped (typ.)",
+        (xL_out - drain_stone_w / 2, backfill_h * 0.55),
+        (xL_block0 - 80.0, y_base_top + 26.0),
+        "Granular backfill / drain stone\nextends up wall; geotextile-wrapped",
         ha="right",
     )
     _leader(
         ax,
         ((xL_toe0 + xL_toe1) / 2, y_base_bot - toe_gravel_depth / 2),
-        (xL_in + 28.0, y_base_bot - 34.0),
+        (xL_in + 28.0, (y_base_bot - toe_gravel_depth) - 12.0),
         '42" washed angular gravel\n(geotextile-wrapped) under toe',
     )
     _leader(
@@ -384,9 +460,9 @@ def main():
     )
     _leader(
         ax,
-        (xL_out + stem_thk - weep_w / 2, weep_y + weep_h / 2),
+        (xL_in + 2.0, weep_y + 0.1),
         (xL_in + 34.0, weep_y + 14.0),
-        "Weep holes @ 8' o.c. (typ.)",
+        "Weep holes @ 8' o.c. (typ.)\nsloped weep pipes through wall",
     )
     _leader(
         ax,
@@ -397,11 +473,12 @@ def main():
     )
 
     ax.set_title("Sunken Garden — Double Cantilever Retaining Wall Section (Schematic)", fontsize=13, fontweight="bold", pad=12)
-    ax.text((xL_in + xR_in) / 2, y_base_bot - toe_gravel_depth - 16.0, "Colin Catlin, 2026", ha="center", va="top", fontsize=7)
+    ax.text((xL_in + xR_in) / 2, (y_base_bot - toe_gravel_depth) - 18.0, "Colin Catlin, 2026", ha="center", va="top", fontsize=7)
 
     # Framing / plot formatting
     ax.set_xlim(xL_block0 - 120.0, xR_block1 + 120.0)
-    ax.set_ylim(y_base_bot - toe_gravel_depth - 28.0, y_wall_top + 22.0)
+    y_bottom = min(y_agg_bot, y_base_bot - toe_gravel_depth) - 38.0
+    ax.set_ylim(y_bottom, y_wall_top + 22.0)
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -409,6 +486,7 @@ def main():
         Patch(facecolor=COL_CONC, edgecolor="black", label="Concrete"),
         Patch(facecolor=COL_SOIL, edgecolor="black", label="Soil / backfill"),
         Patch(facecolor=COL_GRAVEL, edgecolor="black", label="Washed stone / gravel"),
+        Patch(facecolor=COL_AGG, edgecolor="black", label="Compacted aggregate base"),
         Patch(facecolor=COL_XPS, edgecolor="black", label='XPS (1", taped)'),
         Patch(facecolor=COL_BLOCK, edgecolor="black", label="Retaining wall blocks"),
         Patch(facecolor=COL_MEM, edgecolor="black", label="Dampproofing / waterproofing"),
@@ -442,7 +520,9 @@ def main():
         "",
         "• Soil/backfill: soil backfilled to 7' above sunken garden grade. Above that: 3'-0\" wide × 3'-0\" tall raised garden; inner wall is the retaining wall, outer wall is retaining-wall blocks (8\"H × 18\"L × 12\"D typ.).",
         "",
-        "• Drainage: provide 4\" perforated drain tile at base of wall on soil side, sloped to daylight/sump. Use granular drainage stone / backfill at the bottom behind wall, wrapped in geotextile.",
+        "• Drainage: provide 4\" perforated drain tile at base of wall on soil side, sloped to daylight/sump. Provide granular drainage stone / backfill behind wall extending up from the footing; wrap drainage stone in geotextile and protect waterproofing.",
+        "",
+        "• Base: provide compacted crushed stone under footing and stem bearing; confirm thickness, compaction, and bearing requirements.",
         "",
         "• Frost: under the toe (sunken garden side) provide ≥42\" depth of washed angular crushed stone (geotextile-wrapped) per schematic; confirm frost protection strategy and bearing requirements.",
         "",
@@ -450,9 +530,9 @@ def main():
         "",
         "• Waterproofing: dampproofing or waterproofing required along the soil-facing side of retaining wall. Protect membrane and provide drainage path to drain tile.",
         "",
-        "• Weeps: provide weep holes through wall @ 8' o.c. (typ.); coordinate location with waterproofing, drain stone, and interior water management.",
+        "• Weeps: provide sloped weep pipes through full wall thickness @ 8' o.c. (typ.); coordinate with waterproofing, drain stone, and interior water management.",
         "",
-        "• Reinforcing (schematic): L-shaped bars from base into wall; vertical wall steel placed on soil face only with 3\" concrete cover (verify sizing/spacing, development, and temperature/shrinkage reinforcement).",
+        "• Reinforcing (schematic): provide L-shaped dowels from footing into stem; provide continuous footing steel (shown schematically). Place primary vertical stem steel on the soil-facing side only with 3\" cover; coordinate development length into footing, footing steel, and temperature/shrinkage reinforcement with the structural design.",
     ]
     ax_notes.text(2, 146, _wrap_notes(raw_notes), fontsize=9, va="top", ha="left", family="monospace")
 
@@ -463,4 +543,3 @@ def main():
 
 if __name__ == "__main__":
     print(main())
-

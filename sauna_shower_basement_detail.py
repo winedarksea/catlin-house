@@ -7,80 +7,13 @@ Output:
   catlin-house/sauna_shower_basement_detail.png
 """
 
-import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Patch, Polygon, Rectangle
+from matplotlib.patches import Circle, Patch, Polygon
 
-
-def _wrap_notes(lines, width=58):
-    wrapped = []
-    for line in lines:
-        if line.strip().startswith("•"):
-            wrapped.extend(textwrap.wrap(line, width=width))
-        else:
-            wrapped.append(line)
-    return "\n".join(wrapped)
-
-
-def _rect(ax, x, y, w, h, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1, alpha=1.0):
-    r = Rectangle(
-        (x, y),
-        w,
-        h,
-        facecolor=fc,
-        edgecolor=ec,
-        linewidth=lw,
-        linestyle=ls,
-        hatch=hatch,
-        zorder=z,
-        alpha=alpha,
-    )
-    ax.add_patch(r)
-    return r
-
-
-def _poly(ax, pts, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1, alpha=1.0):
-    p = Polygon(
-        np.asarray(pts, dtype=float),
-        closed=True,
-        facecolor=fc,
-        edgecolor=ec,
-        linewidth=lw,
-        linestyle=ls,
-        hatch=hatch,
-        zorder=z,
-        alpha=alpha,
-    )
-    ax.add_patch(p)
-    return p
-
-
-def _leader(ax, xy, text_xy, text, *, ha="left", va="center", zorder=100):
-    ax.annotate(
-        text,
-        xy=xy,
-        xytext=text_xy,
-        textcoords="data",
-        ha=ha,
-        va=va,
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
-        arrowprops=dict(arrowstyle="-", linewidth=1.0, shrinkA=0, shrinkB=0),
-        zorder=zorder,
-    )
-
-
-def _dim_h(ax, x0, x1, y, text, *, text_dy=0.9):
-    ax.annotate("", xy=(x0, y), xytext=(x1, y), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text((x0 + x1) / 2, y + text_dy, text, ha="center", va="bottom", fontsize=9)
-
-
-def _dim_v(ax, y0, y1, x, text, *, text_dx=0.9):
-    ax.annotate("", xy=(x, y0), xytext=(x, y1), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text(x + text_dx, (y0 + y1) / 2, text, ha="left", va="center", fontsize=9, rotation=90)
+from detail_utils import COLORS, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
 
 
 def _sloped_layer(x0, x1, y0, y1, thickness):
@@ -101,19 +34,23 @@ def main():
     ax_notes = fig.add_subplot(gs[0, 1])
 
     # Colors
-    COL_CONC = "#BFBFBF"
-    COL_STONE = "#9C9C9C"
-    COL_WOOD = "#C8A26A"
-    COL_POLYISO = "#F4E6B1"
-    COL_XPS = "#A7D7C5"
-    COL_MEM = "#1E3A5F"
-    COL_METAL = "#A7B5C6"
-    COL_FC = "#E6E6E6"
-    COL_DRY = "#D8D8D8"
-    COL_RUBBER = "#3A3A3A"
-    COL_INSUL = "#DDECC8"
-    COL_GLASS = "#BEE3F8"
-    COL_TILE = "#E9ECEF"
+    COL = COLORS
+    COL_CONC = COL.concrete
+    COL_STONE = COL.stone
+    COL_WOOD = COL.wood
+    COL_POLYISO = COL.polyiso
+    COL_XPS = COL.xps
+    COL_MEM = COL.membrane
+    COL_METAL = COL.metal
+    COL_FC = COL.fiber_cement
+    COL_DRY = COL.drywall
+    COL_RUBBER = COL.rubber
+    COL_INSUL = COL.insulation
+    COL_GLASS = COL.glass
+    COL_TILE = COL.tile
+    COL_SEALANT = COL.sealant
+    COL_POLY = COL.poly
+    COL_EQUIP = COL.equipment
 
     # -----------------------
     # Geometry (inches, schematic)
@@ -217,10 +154,10 @@ def main():
 
     # Thermal break / isolation joint around perimeter (schematic; shown at both ends)
     _rect(ax, x0 - thermal_break_thk, y_sauna_slab_bot_0, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=6)
-    _rect(ax, x0 - thermal_break_thk, y_sauna_top_0, thermal_break_thk, sealant_thk, fc="#6E4F2A", lw=0.9, z=7)
+    _rect(ax, x0 - thermal_break_thk, y_sauna_top_0, thermal_break_thk, sealant_thk, fc=COL_SEALANT, lw=0.9, z=7)
 
     _rect(ax, x1, y_shower_slab_top - slab_thk, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=6)
-    _rect(ax, x1, y_main_ff, thermal_break_thk, sealant_thk, fc="#6E4F2A", lw=0.9, z=7)
+    _rect(ax, x1, y_main_ff, thermal_break_thk, sealant_thk, fc=COL_SEALANT, lw=0.9, z=7)
 
     # Adjacent main basement slab (outside shower/sauna room)
     main_slab_w = 24.0
@@ -285,7 +222,7 @@ def main():
     heater_h = 18.0
     heater_x0 = x0 + 6.0
     heater_y0 = y_main_ff + mem_thk
-    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc="#7F7F7F", ec="black", lw=1.0, hatch="++", z=12)
+    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc=COL_EQUIP, ec="black", lw=1.0, hatch="++", z=12)
 
     # HRV exhaust above heater (pipe in wall)
     hrv_exhaust_diam = 3.0
@@ -399,7 +336,7 @@ def main():
     for spine in ax_in.spines.values():
         spine.set_visible(True)
         spine.set_linewidth(0.8)
-        spine.set_edgecolor("#444444")
+        spine.set_edgecolor(COL_METAL)
 
     sh_w = 96.0  # 8' width (door wall -> far wall)
     y_ff = 0.0

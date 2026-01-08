@@ -1,64 +1,8 @@
-import textwrap
-
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Patch, Polygon, Rectangle
+from matplotlib.patches import Patch, Polygon
 
-
-def _wrap_notes(lines, width=58):
-    wrapped = []
-    for line in lines:
-        if line.strip().startswith("•"):
-            wrapped.extend(textwrap.wrap(line, width=width))
-        else:
-            wrapped.append(line)
-    return "\n".join(wrapped)
-
-
-def _rect(ax, x, y, w, h, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1):
-    r = Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, linewidth=lw, linestyle=ls, hatch=hatch, zorder=z)
-    ax.add_patch(r)
-    return r
-
-
-def _leader(ax, xy, text_xy, text, *, ha="left", va="center", zorder=100):
-    ax.annotate(
-        text,
-        xy=xy,
-        xytext=text_xy,
-        textcoords="data",
-        ha=ha,
-        va=va,
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
-        arrowprops=dict(arrowstyle="-", linewidth=1.0, shrinkA=0, shrinkB=0),
-        zorder=zorder,
-    )
-
-
-def _dim_h(ax, x0, x1, y, text, *, text_dy=0.9):
-    ax.annotate("", xy=(x0, y), xytext=(x1, y), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text((x0 + x1) / 2, y + text_dy, text, ha="center", va="bottom", fontsize=9)
-
-
-def _dim_v(ax, y0, y1, x, text, *, text_dx=0.9):
-    ax.annotate("", xy=(x, y0), xytext=(x, y1), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text(x + text_dx, (y0 + y1) / 2, text, ha="left", va="center", fontsize=9, rotation=90)
-
-
-def _offset_segment(p0, p1, offset):
-    p0 = np.asarray(p0, dtype=float)
-    p1 = np.asarray(p1, dtype=float)
-    d = p1 - p0
-    n = np.array([-d[1], d[0]], dtype=float)
-    n /= np.linalg.norm(n) + 1e-9
-    return p0 + offset * n, p1 + offset * n
-
-
-def _quad_from_segment(p0, p1, thickness):
-    a0, a1 = _offset_segment(p0, p1, thickness / 2)
-    b0, b1 = _offset_segment(p0, p1, -thickness / 2)
-    return np.vstack([a0, a1, b1, b0])
+from detail_utils import COLORS, _dim_h, _dim_v, _leader, _offset_segment, _quad_from_segment, _rect, _wrap_notes
 
 
 def _thick_polyline(points, thickness):
@@ -139,17 +83,18 @@ def main():
     ax_notes = fig.add_subplot(gs[0, 1])
 
     # Colors
-    COL_WOOD = "#C8A26A"
-    COL_DRY = "#E6E6E6"
-    COL_SHEATH = "#D9C8A0"
-    COL_MEM = "#1E3A5F"
-    COL_METAL = "#2F2F2F"
-    COL_FLASH = "#7A0C0C"
-    COL_EPS = "#C8E0F8"
-    COL_POLYISO = "#F4E6B1"
-    COL_SPRAY = "#FFD966"
-    COL_INSUL = "#DDECC8"
-    COL_STEEL = "#A7B5C6"
+    COL = COLORS
+    COL_WOOD = COL.wood
+    COL_DRY = COL.drywall
+    COL_SHEATH = COL.sheathing
+    COL_MEM = COL.membrane
+    COL_METAL = COL.metal_dark
+    COL_FLASH = COL.flashing
+    COL_EPS = COL.eps
+    COL_POLYISO = COL.polyiso
+    COL_SPRAY = COL.spray_foam
+    COL_INSUL = COL.insulation
+    COL_STEEL = COL.metal
 
     # Wall geometry (schematic, inches)
     drywall = 0.625
@@ -500,7 +445,7 @@ def main():
             [gutter_back_x + 0.5, gutter_top_y + 0.5],
         ]
     )
-    ax.add_patch(Polygon(gutter, closed=True, facecolor="#8B8B8B", edgecolor="black", linewidth=1.0, zorder=7))
+    ax.add_patch(Polygon(gutter, closed=True, facecolor=COL_STEEL, edgecolor="black", linewidth=1.0, zorder=7))
     _leader(
         ax,
         (gutter_back_x + gutter_depth / 2, gutter_top_y - gutter_h / 2),

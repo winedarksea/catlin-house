@@ -7,83 +7,16 @@ Output:
   catlin-house/sunken_garden_retaining_wall_detail.png
 """
 
-import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Patch, Polygon, Rectangle
+from matplotlib.patches import Circle, Patch
+
+from detail_utils import COLORS, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
 
 
-def _wrap_notes(lines, width=58):
-    wrapped = []
-    for line in lines:
-        if line.strip().startswith("•"):
-            wrapped.extend(textwrap.wrap(line, width=width))
-        else:
-            wrapped.append(line)
-    return "\n".join(wrapped)
-
-
-def _rect(ax, x, y, w, h, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1, alpha=1.0):
-    r = Rectangle(
-        (x, y),
-        w,
-        h,
-        facecolor=fc,
-        edgecolor=ec,
-        linewidth=lw,
-        linestyle=ls,
-        hatch=hatch,
-        zorder=z,
-        alpha=alpha,
-    )
-    ax.add_patch(r)
-    return r
-
-
-def _poly(ax, pts, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1, alpha=1.0):
-    p = Polygon(
-        np.asarray(pts, dtype=float),
-        closed=True,
-        facecolor=fc,
-        edgecolor=ec,
-        linewidth=lw,
-        linestyle=ls,
-        hatch=hatch,
-        zorder=z,
-        alpha=alpha,
-    )
-    ax.add_patch(p)
-    return p
-
-
-def _leader(ax, xy, text_xy, text, *, ha="left", va="center", zorder=100):
-    ax.annotate(
-        text,
-        xy=xy,
-        xytext=text_xy,
-        textcoords="data",
-        ha=ha,
-        va=va,
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
-        arrowprops=dict(arrowstyle="-", linewidth=1.0, shrinkA=0, shrinkB=0),
-        zorder=zorder,
-    )
-
-
-def _dim_h(ax, x0, x1, y, text, *, text_dy=0.9):
-    ax.annotate("", xy=(x0, y), xytext=(x1, y), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text((x0 + x1) / 2, y + text_dy, text, ha="center", va="bottom", fontsize=9)
-
-
-def _dim_v(ax, y0, y1, x, text, *, text_dx=0.9):
-    ax.annotate("", xy=(x, y0), xytext=(x, y1), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text(x + text_dx, (y0 + y1) / 2, text, ha="left", va="center", fontsize=9, rotation=90)
-
-
-def _pipe(ax, x, y, d, *, fc="#A7B5C6", ec="black", lw=1.1, z=6):
+def _pipe(ax, x, y, d, *, fc=COLORS.metal, ec="black", lw=1.1, z=6):
     ax.add_patch(Circle((x, y), radius=d / 2, facecolor="white", edgecolor=ec, lw=lw, zorder=z))
     ax.add_patch(Circle((x, y), radius=d / 2 - 0.25, facecolor=fc, edgecolor="none", alpha=0.85, zorder=z + 1))
 
@@ -102,7 +35,7 @@ def _dotted_pipe(ax, p0, p1, d, *, z=15):
     for p in (p0, p1):
         ax.add_patch(Circle((p[0], p[1]), radius=d / 2, facecolor="white", edgecolor="black", lw=1.0, zorder=z + 1))
         ax.add_patch(
-            Circle((p[0], p[1]), radius=d / 2 - 0.25, facecolor="#A7B5C6", edgecolor="none", alpha=0.85, zorder=z + 2)
+            Circle((p[0], p[1]), radius=d / 2 - 0.25, facecolor=COLORS.metal, edgecolor="none", alpha=0.85, zorder=z + 2)
         )
 
 
@@ -135,13 +68,14 @@ def main():
     ax_notes = fig.add_subplot(gs[0, 1])
 
     # Colors
-    COL_CONC = "#BFBFBF"
-    COL_GRAVEL = "#9C9C9C"
-    COL_AGG = "#7F7F7F"
-    COL_SOIL = "#D2B48C"
-    COL_XPS = "#A7D7C5"
-    COL_BLOCK = "#A0A0A0"
-    COL_MEM = "#1E3A5F"
+    COL = COLORS
+    COL_CONC = COL.concrete
+    COL_GRAVEL = COL.stone
+    COL_AGG = COL.aggregate
+    COL_SOIL = COL.soil
+    COL_XPS = COL.xps
+    COL_BLOCK = COL.block
+    COL_MEM = COL.membrane
 
     # Units: inches (schematic)
     inner_clear = 216.0  # 18'

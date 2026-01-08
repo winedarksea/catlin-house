@@ -1,67 +1,12 @@
-import textwrap
-
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Patch, Polygon, Rectangle
+from matplotlib.patches import Patch, Polygon
+
+from detail_utils import COLORS, _dim_h, _dim_v, _leader, _offset_segment, _quad_from_segment, _rect, _wrap_notes
 
 
 def _unit(v):
     return f'{v:g}"'
-
-
-def _wrap_notes(lines, width=54):
-    wrapped = []
-    for line in lines:
-        if line.strip().startswith("•"):
-            wrapped.extend(textwrap.wrap(line, width=width))
-        else:
-            wrapped.append(line)
-    return "\n".join(wrapped)
-
-
-def _rect(ax, x, y, w, h, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1):
-    p = Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, linewidth=lw, linestyle=ls, hatch=hatch, zorder=z)
-    ax.add_patch(p)
-    return p
-
-
-def _leader(ax, xy, text_xy, text, *, ha="left", va="center"):
-    ax.annotate(
-        text,
-        xy=xy,
-        xytext=text_xy,
-        textcoords="data",
-        ha=ha,
-        va=va,
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
-        arrowprops=dict(arrowstyle="-", linewidth=1.0, shrinkA=0, shrinkB=0),
-    )
-
-
-def _dim_h(ax, x0, x1, y, text, *, text_dy=0.9):
-    ax.annotate("", xy=(x0, y), xytext=(x1, y), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text((x0 + x1) / 2, y + text_dy, text, ha="center", va="bottom", fontsize=9)
-
-
-def _dim_v(ax, y0, y1, x, text, *, text_dx=0.9):
-    ax.annotate("", xy=(x, y0), xytext=(x, y1), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text(x + text_dx, (y0 + y1) / 2, text, ha="left", va="center", fontsize=9, rotation=90)
-
-
-def _offset_segment(p0, p1, offset):
-    p0 = np.asarray(p0, dtype=float)
-    p1 = np.asarray(p1, dtype=float)
-    d = p1 - p0
-    n = np.array([-d[1], d[0]], dtype=float)
-    n /= np.linalg.norm(n) + 1e-9
-    return p0 + offset * n, p1 + offset * n
-
-
-def _quad_from_segment(p0, p1, thickness):
-    a0, a1 = _offset_segment(p0, p1, thickness / 2)
-    b0, b1 = _offset_segment(p0, p1, -thickness / 2)
-    return np.vstack([a0, a1, b1, b0])
 
 
 def main():
@@ -133,17 +78,23 @@ def main():
     y_topplate0 = y_topplate_top - top_plate
     y_raised_heel_top = y_topplate_top + raised_heel  # total 8' wall + heel
 
-    # Colors
-    COL_CONC = "#BFBFBF"
-    COL_EPS = "#C8E0F8"
-    COL_WOOD = "#C8A26A"
-    COL_DRY = "#E6E6E6"
-    COL_GRAVEL = "#9C9C9C"
-    COL_SOIL = "#D2B48C"
-    COL_METAL = "#2F2F2F"
-    COL_FLASH = "#7A0C0C"
-    COL_POLY = "#BEE3F8"
-    COL_XPS = "#A7D7C5"
+    # Colors (shared palette)
+    COL = COLORS
+    COL_CONC = COL.concrete
+    COL_EPS = COL.eps
+    COL_WOOD = COL.wood
+    COL_DRY = COL.drywall
+    COL_GRAVEL = COL.stone
+    COL_SOIL = COL.soil
+    COL_METAL = COL.metal_dark
+    COL_FLASH = COL.flashing
+    COL_POLY = COL.poly
+    COL_XPS = COL.xps
+    COL_SHEATH = COL.sheathing
+    COL_UNDERLAY = COL.underlayment
+    COL_RIVER_ROCK = COL.river_rock
+    COL_SOFFIT = COL.soffit
+    COL_INSUL = COL.insulation
 
     # -----------------------
     # Exterior grade / soil
@@ -181,7 +132,7 @@ def main():
         grade_y - river_rock_depth,
         river_rock_width,
         river_rock_depth,
-        fc="#A9A9A9",
+        fc=COL_RIVER_ROCK,
         ec="black",
         lw=1.0,
         hatch="o",
@@ -320,7 +271,7 @@ def main():
 
     # Zip-R sheathing (extends down over sill plate onto flashing, and up over raised heel)
     zip_r_bottom = y_sill0 - 0.5  # extends down over sill plate onto flashing
-    _rect(ax, x_stud_ext, zip_r_bottom, zip_r, y_raised_heel_top - zip_r_bottom, fc="#E9DCC9", ec="black", lw=1.0, z=4)
+    _rect(ax, x_stud_ext, zip_r_bottom, zip_r, y_raised_heel_top - zip_r_bottom, fc=COL_SHEATH, ec="black", lw=1.0, z=4)
     _leader(
         ax,
         (x_stud_ext + zip_r, y_sill1 + 62.0),
@@ -504,8 +455,8 @@ def main():
     # Metal roofing
     metal_seg0, metal_seg1 = _offset_segment(roof_seg0, roof_seg1, osb_offset + 0.6)
     metal_poly = _quad_from_segment(metal_seg0, metal_seg1, 0.5)
-    ax.add_patch(Polygon(osb_poly, closed=True, facecolor="#D9C8A0", edgecolor="black", linewidth=0.8, zorder=6))
-    ax.add_patch(Polygon(underlayment_poly, closed=True, facecolor="#4A4A4A", edgecolor="black", linewidth=0.6, zorder=7))
+    ax.add_patch(Polygon(osb_poly, closed=True, facecolor=COL_SHEATH, edgecolor="black", linewidth=0.8, zorder=6))
+    ax.add_patch(Polygon(underlayment_poly, closed=True, facecolor=COL_UNDERLAY, edgecolor="black", linewidth=0.6, zorder=7))
     ax.add_patch(Polygon(metal_poly, closed=True, facecolor=COL_METAL, edgecolor="black", linewidth=0.8, zorder=8))
     _leader(ax, ((osb_seg0[0] + osb_seg1[0]) / 2, (osb_seg0[1] + osb_seg1[1]) / 2 + 1.5), (x_exterior + 30.0, y_topplate_top + 14.0), "Roof: OSB + underlayment + (optional)\nrainscreen mesh + metal roofing")
 
@@ -520,7 +471,7 @@ def main():
     fascia_h = fascia_top_y - fascia_bot_y
     _rect(ax, fascia_x, fascia_bot_y, fascia_w, fascia_h, fc=COL_WOOD, ec="black", lw=1.2, z=8)
 
-    # Drip edge flashing: over roof edge and down full fascia face
+    # Drip edge flashing: over roof edge and down fascia face
     # Simple L-shaped flashing with visible thickness
     drip_thickness = 0.15
     roof_dir = (metal_seg1 - metal_seg0) / (np.linalg.norm(metal_seg1 - metal_seg0) + 1e-9)
@@ -540,12 +491,12 @@ def main():
         ]
     )
     ax.add_patch(Polygon(drip_edge, closed=True, facecolor=COL_FLASH, edgecolor="black", linewidth=1.0, zorder=9))
-    _leader(ax, (fascia_face_x + drip_thickness/2, (drip_roof_out[1] + fascia_bot_y) / 2), (x_exterior + 30.0, fascia_bot_y - 0.0), "Drip edge flashing wraps over\nroof edge and down full fascia")
+    _leader(ax, (fascia_face_x + drip_thickness/2, (drip_roof_out[1] + fascia_bot_y) / 2), (x_exterior + 30.0, fascia_bot_y - 0.0), "Drip edge flashing wraps over\nroof edge and down fascia face")
 
     # Vented soffit: horizontal panel under overhang, from wall face to fascia
     soffit_x0 = x_siding_ext  # start at outer face of wall cladding
     soffit_x1 = fascia_x
-    _rect(ax, soffit_x0, soffit_y, soffit_x1 - soffit_x0, 0.5, fc="#E0E0E0", ec="black", lw=1.0, z=7)
+    _rect(ax, soffit_x0, soffit_y, soffit_x1 - soffit_x0, 0.5, fc=COL_SOFFIT, ec="black", lw=1.0, z=7)
     ax.plot([soffit_x0 + 1.0, soffit_x1 - 1.0], [soffit_y + 0.25, soffit_y + 0.25], color="black", linewidth=0.8, zorder=8, linestyle=":")
     _leader(ax, ((soffit_x0 + soffit_x1) / 2, soffit_y + 0.25), (x_exterior + 30.0, soffit_y - 12.0), "Vented soffit (aluminum recommended)")
 
@@ -568,7 +519,7 @@ def main():
                 ]
             ),
             closed=True,
-            facecolor="#DDECC8",
+            facecolor=COL_INSUL,
             edgecolor="black",
             linewidth=0.8,
             hatch="..",
@@ -603,7 +554,7 @@ def main():
         Patch(facecolor=COL_XPS, edgecolor="black", label="XPS foam"),
         Patch(facecolor=COL_WOOD, edgecolor="black", label="Wood framing / plates"),
         Patch(facecolor=COL_DRY, edgecolor="black", label="Drywall"),
-        Patch(facecolor="#DDECC8", edgecolor="black", label="Attic Insulation"),
+        Patch(facecolor=COL_INSUL, edgecolor="black", label="Attic Insulation"),
         Patch(facecolor=COL_METAL, edgecolor="black", label="Metal cladding / roofing"),
         Patch(facecolor=COL_GRAVEL, edgecolor="black", label="Stone / gravel"),
     ]
@@ -657,7 +608,7 @@ def main():
         "",
         "• Seal for 1 hour fire rating (UL listed or as per IBC table 722.6.2(1) and table 722.6.2(2), sealed Type X 5/8\" drywall and seal penetrations with ASTM E814 rated sealants) or use listed 1-hr wall (e.g. UL U301). Confirm per R302.6 if garage near dwelling.",
     ]
-    ax_notes.text(5, 142, _wrap_notes(raw_notes), fontsize=9, va="top", ha="left", family="monospace")
+    ax_notes.text(5, 142, _wrap_notes(raw_notes, width=54), fontsize=9, va="top", ha="left", family="monospace")
 
     out_path = "./garage_wall_detail_side.png"
     fig.savefig(out_path, dpi=300, bbox_inches="tight", pad_inches=0.02)

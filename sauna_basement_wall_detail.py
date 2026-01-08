@@ -1,49 +1,8 @@
-import textwrap
-
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Patch, Polygon, Rectangle
+from matplotlib.patches import Circle, Patch, Polygon
 
-
-def _wrap_notes(lines, width=58):
-    wrapped = []
-    for line in lines:
-        if line.strip().startswith("•"):
-            wrapped.extend(textwrap.wrap(line, width=width))
-        else:
-            wrapped.append(line)
-    return "\n".join(wrapped)
-
-
-def _rect(ax, x, y, w, h, *, fc="white", ec="black", lw=1.2, ls="-", hatch=None, z=1):
-    r = Rectangle((x, y), w, h, facecolor=fc, edgecolor=ec, linewidth=lw, linestyle=ls, hatch=hatch, zorder=z)
-    ax.add_patch(r)
-    return r
-
-
-def _leader(ax, xy, text_xy, text, *, ha="left", va="center", zorder=100):
-    ax.annotate(
-        text,
-        xy=xy,
-        xytext=text_xy,
-        textcoords="data",
-        ha=ha,
-        va=va,
-        fontsize=9,
-        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
-        arrowprops=dict(arrowstyle="-", linewidth=1.0, shrinkA=0, shrinkB=0),
-        zorder=zorder,
-    )
-
-
-def _dim_h(ax, x0, x1, y, text, *, text_dy=0.9):
-    ax.annotate("", xy=(x0, y), xytext=(x1, y), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text((x0 + x1) / 2, y + text_dy, text, ha="center", va="bottom", fontsize=9)
-
-
-def _dim_v(ax, y0, y1, x, text, *, text_dx=0.9):
-    ax.annotate("", xy=(x, y0), xytext=(x, y1), arrowprops=dict(arrowstyle="<->", linewidth=1.1))
-    ax.text(x + text_dx, (y0 + y1) / 2, text, ha="left", va="center", fontsize=9, rotation=90)
+from detail_utils import COLORS, _dim_h, _dim_v, _leader, _rect, _wrap_notes
 
 
 def main():
@@ -53,16 +12,21 @@ def main():
     ax_notes = fig.add_subplot(gs[0, 1])
 
     # Colors
-    COL_CONC = "#BFBFBF"
-    COL_STONE = "#9C9C9C"
-    COL_WOOD = "#C8A26A"
-    COL_POLYISO = "#F4E6B1"
-    COL_XPS = "#A7D7C5"
-    COL_MEM = "#1E3A5F"
-    COL_METAL = "#A7B5C6"
-    COL_FC = "#E6E6E6"
-    COL_RUBBER = "#3A3A3A"
-    COL_INSUL = "#DDECC8"
+    COL = COLORS
+    COL_CONC = COL.concrete
+    COL_STONE = COL.stone
+    COL_WOOD = COL.wood
+    COL_POLYISO = COL.polyiso
+    COL_XPS = COL.xps
+    COL_MEM = COL.membrane
+    COL_METAL = COL.metal
+    COL_FC = COL.fiber_cement
+    COL_RUBBER = COL.rubber
+    COL_INSUL = COL.insulation
+    COL_SEALANT = COL.sealant
+    COL_POLY = COL.poly
+    COL_EQUIP = COL.equipment
+    COL_DRY = COL.drywall
 
     # -----------------------
     # Geometry (inches, schematic)
@@ -173,13 +137,13 @@ def main():
 
     # Thermal break at slab perimeter (left, between slab and concrete wall)
     _rect(ax, x_conc_int, y_slab_bot, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=3)
-    _rect(ax, x_conc_int, y_slab_top, thermal_break_thk, sealant_thk, fc="#6E4F2A", ec="black", lw=0.9, z=5)
+    _rect(ax, x_conc_int, y_slab_top, thermal_break_thk, sealant_thk, fc=COL_SEALANT, ec="black", lw=0.9, z=5)
 
     slab_x0 = x_conc_int
     # Sauna slab extends to include thermal breaks on both sides.
     slab_x1 = x_polyR0 + thermal_break_thk
     _rect(ax, slab_x0, y_slab_bot, slab_x1 - slab_x0, slab_thk, fc=COL_CONC, lw=1.2, z=2)
-    _rect(ax, slab_x0, y_poly_bot, slab_x1 - slab_x0, poly_sheet_thk, fc="#BEE3F8", ec="black", lw=0.6, z=1)
+    _rect(ax, slab_x0, y_poly_bot, slab_x1 - slab_x0, poly_sheet_thk, fc=COL_POLY, ec="black", lw=0.6, z=1)
     _rect(ax, slab_x0, y_xps_bot, slab_x1 - slab_x0, xps_under_thk, fc=COL_XPS, lw=1.0, z=1)
     _rect(ax, slab_x0, y_stone_under_bot, slab_x1 - slab_x0, stone_under_slab, fc=COL_STONE, lw=0.9, hatch="o", z=0)
 
@@ -187,7 +151,7 @@ def main():
     slab_break_x0 = slab_x1
     slab_break_x1 = slab_break_x0 + thermal_break_thk
     _rect(ax, slab_break_x0, y_slab_bot, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=3)
-    _rect(ax, slab_break_x0, y_slab_top, thermal_break_thk, sealant_thk, fc="#6E4F2A", ec="black", lw=0.9, z=5)
+    _rect(ax, slab_break_x0, y_slab_top, thermal_break_thk, sealant_thk, fc=COL_SEALANT, ec="black", lw=0.9, z=5)
     _rect(ax, slab_break_x1, y_slab_bot, 18.0, slab_thk, fc=COL_CONC, lw=1.0, ls="--", z=1)
 
     # -----------------------
@@ -196,7 +160,7 @@ def main():
     plate_thk = 1.5
     _rect(ax, x_stud0, y_slab_top, stud_depth, plate_thk, fc=COL_WOOD, lw=1.2, z=6)
     _rect(ax, x_stud0, y_slab_top + plate_thk, stud_depth, (y_joist_bot - (y_slab_top + plate_thk)), fc=COL_INSUL, lw=1.0, hatch="..", z=1)
-    _rect(ax, x_dry0, y_slab_top, drywall, (y_joist_bot - y_slab_top), fc="#E6E6E6", lw=1.0, z=0)
+    _rect(ax, x_dry0, y_slab_top, drywall, (y_joist_bot - y_slab_top), fc=COL_DRY, lw=1.0, z=0)
 
     # Left wall framing against concrete (supports drop ceiling)
     _rect(ax, x_studL0, y_slab_top, stud_depth, plate_thk, fc=COL_WOOD, lw=1.2, z=6)
@@ -290,7 +254,7 @@ def main():
     heater_h = 18.0
     heater_x0 = x_sauna_left + 6.0
     heater_y0 = y_slab_top + mem_thk
-    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc="#7F7F7F", ec="black", lw=1.0, hatch="++", z=12)
+    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc=COL_EQUIP, ec="black", lw=1.0, hatch="++", z=12)
 
     # Joists above (schematic)
     _rect(ax, x_conc_ext - 6.0, y_joist_bot, (x_dry1 - (x_conc_ext - 6.0)) + 8.0, joist_depth, fc=COL_WOOD, lw=1.2, hatch="\\\\", z=3)

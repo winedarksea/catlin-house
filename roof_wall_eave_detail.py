@@ -565,7 +565,7 @@ def main():
         loc="left",
         pad=12,
     )
-    ax.text(x_dry0 - 1.0, y_wall_bot - 6.5, "Colin Catlin, 2026", ha="left", va="top", fontsize=7)
+    ax.text(x_dry0 - 1.0, y_wall_bot - 10.0, "Colin Catlin, 2026", ha="left", va="top", fontsize=7)
 
     ax.set_xlim(x_dry0 - 4.0, gutter_front_x + 12.0)
     ax.set_ylim(y_wall_bot - 8.0, y_joist_center + 24.0)

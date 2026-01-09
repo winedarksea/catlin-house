@@ -304,3 +304,108 @@ def _lumber(ax, x, y, w, h, *, fc=COLORS.wood, ec="black", lw=1.1, ls="-", z=5, 
         ax.plot([x + w, x], [y, y + h], color="black", linewidth=x_lw, zorder=z + 1)
     
     return rect
+
+
+def _french_drain(ax, x, y, diameter, *, fc=COLORS.metal, ec="black", lw=1.1, z=3, fill_alpha=0.75):
+    """
+    Draw a french drain (perforated pipe) in cross-section.
+    
+    Parameters:
+    -----------
+    x, y : float
+        Center coordinates of the pipe
+    diameter : float
+        Diameter of the pipe
+    fc : color
+        Fill color for the pipe wall
+    ec : color
+        Edge color
+    lw : float
+        Line width
+    z : int
+        Z-order for layering
+    fill_alpha : float
+        Alpha transparency for the pipe wall
+    """
+    # Outer circle (white background)
+    ax.add_patch(Circle((x, y), radius=diameter / 2, facecolor="white", edgecolor=ec, lw=lw, zorder=z))
+    # Inner circle (pipe wall with material color)
+    ax.add_patch(Circle((x, y), radius=diameter / 2 - 0.25, facecolor=fc, edgecolor="none", alpha=fill_alpha, zorder=z + 1))
+
+
+def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, poly_thk=0.05, stone_thk=4.0, 
+                   thermal_break_thk=1.0, sealant_thk=0.5, thermal_break_side='left',
+                   thermal_break_x=None, show_stone=True):
+    """
+    Draw a complete slab assembly with optional thermal break at perimeter.
+    
+    Parameters:
+    -----------
+    ax : matplotlib axes
+        The axes to draw on
+    x0, x1 : float
+        Left and right x-coordinates of the slab
+    y_top : float
+        Top surface of the slab
+    slab_thk : float
+        Thickness of concrete slab (default 4.0")
+    xps_thk : float
+        Thickness of XPS insulation under slab (default 2.0")
+    poly_thk : float
+        Thickness of poly vapor barrier (schematic, default 0.05")
+    stone_thk : float
+        Thickness of gravel base (default 4.0")
+    thermal_break_thk : float
+        Thickness of thermal break XPS at perimeter (default 1.0")
+    sealant_thk : float
+        Thickness of sealant at top of thermal break (default 0.5")
+    thermal_break_side : str
+        'left', 'right', 'both', or None for thermal break location
+    thermal_break_x : float or tuple
+        X-coordinate(s) for thermal break. If None, uses x0 for 'left' or x1 for 'right'
+    show_stone : bool
+        Whether to show the stone/gravel base layer
+    
+    Returns:
+    --------
+    dict with layer y-coordinates: 'slab_bot', 'poly_bot', 'xps_bot', 'stone_bot'
+    """
+    COL = COLORS
+    
+    y_slab_bot = y_top - slab_thk
+    y_poly_bot = y_slab_bot - poly_thk
+    y_xps_bot = y_poly_bot - xps_thk
+    y_stone_bot = y_xps_bot - stone_thk
+    
+    # Draw thermal break(s) if specified
+    if thermal_break_side and thermal_break_side != 'none':
+        if thermal_break_side == 'left' or thermal_break_side == 'both':
+            tb_x = thermal_break_x if thermal_break_x is not None else x0
+            _rect(ax, tb_x, y_slab_bot, thermal_break_thk, slab_thk, fc=COL.xps, lw=1.0, z=3)
+            _rect(ax, tb_x, y_top, thermal_break_thk, sealant_thk, fc=COL.sealant, ec="black", lw=0.9, z=5)
+            # Adjust slab start if thermal break is at edge
+            if thermal_break_x is None:
+                x0 = x0 + thermal_break_thk
+        
+        if thermal_break_side == 'right' or thermal_break_side == 'both':
+            tb_x = thermal_break_x if (thermal_break_x is not None and thermal_break_side == 'right') else (x1 - thermal_break_thk)
+            _rect(ax, tb_x, y_slab_bot, thermal_break_thk, slab_thk, fc=COL.xps, lw=1.0, z=3)
+            _rect(ax, tb_x, y_top, thermal_break_thk, sealant_thk, fc=COL.sealant, ec="black", lw=0.9, z=5)
+            # Adjust slab end if thermal break is at edge
+            if thermal_break_x is None:
+                x1 = x1 - thermal_break_thk
+    
+    # Draw slab layers
+    _rect(ax, x0, y_slab_bot, x1 - x0, slab_thk, fc=COL.concrete, lw=1.2, z=2)
+    _rect(ax, x0, y_poly_bot, x1 - x0, poly_thk, fc=COL.membrane, ec="black", lw=0.6, z=1)
+    _rect(ax, x0, y_xps_bot, x1 - x0, xps_thk, fc=COL.xps, lw=1.0, z=1)
+    
+    if show_stone:
+        _rect(ax, x0, y_stone_bot, x1 - x0, stone_thk, fc=COL.aggregate, lw=0.9, hatch=HATCHES.gravel, z=0)
+    
+    return {
+        'slab_bot': y_slab_bot,
+        'poly_bot': y_poly_bot,
+        'xps_bot': y_xps_bot,
+        'stone_bot': y_stone_bot
+    }

@@ -2,39 +2,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch, Polygon
 
-from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _lumber, _offset_segment, _quad_from_segment, _rect, _wrap_notes
-
-
-def _thick_polyline(points, thickness):
-    pts = np.asarray(points, dtype=float)
-    if len(pts) < 2:
-        raise ValueError("need at least 2 points")
-
-    seg = pts[1:] - pts[:-1]
-    norms = np.stack([-seg[:, 1], seg[:, 0]], axis=1)
-    norms /= np.linalg.norm(norms, axis=1, keepdims=True) + 1e-9
-
-    vnorms = np.zeros_like(pts)
-    vnorms[0] = norms[0]
-    vnorms[-1] = norms[-1]
-
-    for i in range(1, len(pts) - 1):
-        n0 = norms[i - 1]
-        n1 = norms[i]
-        m = n0 + n1
-        m_norm = np.linalg.norm(m)
-        if m_norm < 1e-6:
-            vnorms[i] = n1
-            continue
-        m /= m_norm
-        denom = float(np.dot(m, n1))
-        denom = max(denom, 0.25)  # keep miters from exploding at sharp corners
-        vnorms[i] = m / denom
-
-    half = thickness / 2
-    outer = pts + half * vnorms
-    inner = pts - half * vnorms
-    return np.vstack([outer, inner[::-1]])
+from detail_utils import (
+    COLORS,
+    HATCHES,
+    _dim_h,
+    _dim_v,
+    _flashing,
+    _leader,
+    _lumber,
+    _offset_segment,
+    _quad_from_segment,
+    _rect,
+    _wrap_notes,
+)
 
 
 def _pt_at_x(seg0, seg1, x):
@@ -398,8 +378,7 @@ def main():
         [drip_face_x + drip_hem_dx, drip_down_y - 0.15],
         # [drip_face_x + drip_hem_dx, drip_down_y + 0.9],
     ]
-    drip_poly = _thick_polyline(drip_pts, drip_thk)
-    ax.add_patch(Polygon(drip_poly, closed=True, facecolor=COL_STEEL, edgecolor="black", linewidth=1.0, zorder=9))
+    _flashing(ax, drip_pts, drip_thk, fc=COL_STEEL, ec="black", lw=1.0, z=9, alpha=0.95)
     _leader(
         ax,
         (drip_face_x + 0.05, (gutter_top_y + drip_down_y) / 2),
@@ -416,24 +395,15 @@ def main():
     z_flash_out = 1.5  # horizontal extension 
     z_flash_down = 2.0  # downward leg length
     z_flash_mid_y = flash_bot_y + 1.0  # where horizontal leg starts
-    z_flash = np.array([
-        # Back vertical leg (behind wall furring, running up behind gutter)
-        [x_fur1, flash_bot_y],
-        [x_fur1, flash_top_y],
-        [x_fur1 + z_flash_thick, flash_top_y],
-        [x_fur1 + z_flash_thick, z_flash_mid_y],
-        # Horizontal leg (extending outward at bottom, near where siding starts)
-        [x_fur1 + z_flash_thick + z_flash_out, z_flash_mid_y],
-        [x_fur1 + z_flash_thick + z_flash_out, z_flash_mid_y - z_flash_thick],
-        # Front downward leg (in front of siding)
-        [x_fur1 + z_flash_out + z_flash_thick, z_flash_mid_y - z_flash_thick],
-        [x_fur1 + z_flash_out + z_flash_thick, z_flash_mid_y - z_flash_thick - z_flash_down],
-        [x_fur1 + z_flash_out, z_flash_mid_y - z_flash_thick - z_flash_down],
-        [x_fur1 + z_flash_out, z_flash_mid_y - z_flash_thick],
-        # Back along horizontal
-        [x_fur1, z_flash_mid_y - z_flash_thick],
-    ])
-    ax.add_patch(Polygon(z_flash, closed=True, facecolor=COL_STEEL, edgecolor="black", linewidth=0.9, zorder=8))
+    z_centerline = np.array(
+        [
+            (x_fur1 + z_flash_thick / 2, flash_top_y - z_flash_thick / 2),
+            (x_fur1 + z_flash_thick / 2, z_flash_mid_y - z_flash_thick / 2),
+            (x_fur1 + z_flash_out + z_flash_thick / 2, z_flash_mid_y - z_flash_thick / 2),
+            (x_fur1 + z_flash_out + z_flash_thick / 2, z_flash_mid_y - z_flash_down),
+        ]
+    )
+    _flashing(ax, z_centerline, z_flash_thick, fc=COL_STEEL, ec="black", lw=0.9, z=8, alpha=0.95)
 
     # Gutter (6" box, fascia style) - positioned at eave
     gutter = np.array(

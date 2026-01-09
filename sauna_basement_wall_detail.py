@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Patch, Polygon
 
-from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _lumber, _rect, _wrap_notes
+from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _french_drain, _leader, _lumber, _rect, _slab_assembly, _wrap_notes
 
 
 def main():
@@ -132,22 +132,32 @@ def main():
     # French drain in wider stone (not under footing)
     drain_x = x_stone0 + drain_diam * 0.8
     drain_y = y_stone1 + stone_base_thk / 2
-    ax.add_patch(Circle((drain_x, drain_y), radius=drain_diam / 2, facecolor="white", edgecolor="black", lw=1.1, zorder=3))
-    ax.add_patch(Circle((drain_x, drain_y), radius=drain_diam / 2 - 0.25, facecolor=COL_METAL, edgecolor="none", alpha=0.75, zorder=3))
+    _french_drain(ax, drain_x, drain_y, drain_diam, fc=COL_METAL, z=3)
 
-    # Thermal break at slab perimeter (left, between slab and concrete wall)
+    # Sauna slab assembly with thermal breaks on both sides
+    # First draw left thermal break
     _rect(ax, x_conc_int, y_slab_bot, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=3)
     _rect(ax, x_conc_int, y_slab_top, thermal_break_thk, sealant_thk, fc=COL_SEALANT, ec="black", lw=0.9, z=5)
 
-    slab_x0 = x_conc_int
+    slab_x0 = x_conc_int + thermal_break_thk
     # Sauna slab extends to include thermal breaks on both sides.
-    slab_x1 = x_polyR0 + thermal_break_thk
-    _rect(ax, slab_x0, y_slab_bot, slab_x1 - slab_x0, slab_thk, fc=COL_CONC, lw=1.2, z=2)
-    _rect(ax, slab_x0, y_poly_bot, slab_x1 - slab_x0, poly_sheet_thk, fc=COL_POLY, ec="black", lw=0.6, z=1)
-    _rect(ax, slab_x0, y_xps_bot, slab_x1 - slab_x0, xps_under_thk, fc=COL_XPS, lw=1.0, z=1)
-    _rect(ax, slab_x0, y_stone_under_bot, slab_x1 - slab_x0, stone_under_slab, fc=COL_STONE, lw=0.9, hatch=HATCHES.gravel, z=0)
-
-    # Thermal break at right edge (sauna slab to adjacent slab / room, schematic)
+    slab_x1 = x_polyR0
+    
+    # Use helper function for main slab layers
+    slab_layers = _slab_assembly(
+        ax,
+        slab_x0,
+        slab_x1,
+        y_slab_top,
+        slab_thk=slab_thk,
+        xps_thk=xps_under_thk,
+        poly_thk=poly_sheet_thk,
+        stone_thk=stone_under_slab,
+        thermal_break_side='none',  # We handle thermal breaks separately for sauna
+        show_stone=True,
+    )
+    
+    # Right side thermal break (sauna slab to adjacent slab / room, schematic)
     slab_break_x0 = slab_x1
     slab_break_x1 = slab_break_x0 + thermal_break_thk
     _rect(ax, slab_break_x0, y_slab_bot, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=3)

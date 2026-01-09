@@ -2,7 +2,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch, Polygon
 
-from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _lumber, _offset_segment, _quad_from_segment, _rect, _wrap_notes
+from detail_utils import (
+    COLORS,
+    HATCHES,
+    _dim_h,
+    _dim_v,
+    _flashing,
+    _leader,
+    _lumber,
+    _offset_segment,
+    _path_from_steps,
+    _quad_from_segment,
+    _rect,
+    _wrap_notes,
+)
 
 
 def _unit(v):
@@ -305,18 +318,15 @@ def main():
 
     # Z-flashing / drip edge at base of wall cladding (schematic)
     z_y = y_sill0 - 0.2
-    # Exterior Z-flashing
-    z_ext = np.array(
-        [
-            [x_stud_ext + 0.1, z_y + 0.8],
-            [x_stud_ext + 0.1, z_y],
-            [x_exterior + 0.2, z_y],
-            [x_exterior + 0.2, z_y - 0.2],
-            [x_stud_ext + 0.3, z_y - 0.2],
-            [x_stud_ext + 0.3, z_y + 0.8],
-        ]
-    )
-    ax.add_patch(Polygon(z_ext, closed=True, facecolor=COL_FLASH, edgecolor="black", linewidth=0.9, zorder=6))
+    z_thk = 0.2
+    # Exterior Z-flashing centerline: down at wall face, out to cladding face, then short down leg.
+    z_ext_start = (x_stud_ext + z_thk, z_y + 0.7)
+    z_ext_steps = [
+        (0.0, -0.8),  # down along wall face
+        (x_exterior + 0.2 - z_ext_start[0], 0.0),  # out toward cladding edge
+        (0.0, -0.2),  # short down leg (drip)
+    ]
+    _flashing(ax, _path_from_steps(z_ext_start, z_ext_steps), z_thk, fc=COL_FLASH, ec="black", lw=0.9, z=6, alpha=0.95)
     _leader(
         ax,
         (x_exterior + 0.1, z_y + 0.2),
@@ -326,17 +336,13 @@ def main():
     )
     
     # Interior Z-flashing (mirror image)
-    z_int = np.array(
-        [
-            [x_stud_int - 0.1, z_y + 0.8],
-            [x_stud_int - 0.1, z_y],
-            [x_dry_int - 0.2, z_y],
-            [x_dry_int - 0.2, z_y - 0.2],
-            [x_stud_int - 0.3, z_y - 0.2],
-            [x_stud_int - 0.3, z_y + 0.8],
-        ]
-    )
-    ax.add_patch(Polygon(z_int, closed=True, facecolor=COL_FLASH, edgecolor="black", linewidth=0.9, zorder=6))
+    z_int_start = (x_stud_int - z_thk, z_y + 0.7)
+    z_int_steps = [
+        (0.0, -0.8),
+        (x_dry_int - 0.2 - z_int_start[0], 0.0),
+        (0.0, -0.2),
+    ]
+    _flashing(ax, _path_from_steps(z_int_start, z_int_steps), z_thk, fc=COL_FLASH, ec="black", lw=0.9, z=6, alpha=0.95)
     _leader(
         ax,
         (x_dry_int - 6.0, z_y + 0.1),
@@ -479,18 +485,14 @@ def main():
     drip_roof_out = metal_seg1 + roof_dir * 0.8
     fascia_face_x = fascia_x + fascia_w
     
-    # Create clean L-shape: over roof, then down fascia
-    drip_edge = np.array(
-        [
-            drip_roof_in,  # inner roof edge
-            drip_roof_out,  # outer roof edge
-            [fascia_face_x + drip_thickness, drip_roof_out[1]],  # corner (outer)
-            [fascia_face_x + drip_thickness, fascia_bot_y - 0.3],  # down fascia (outer)
-            [fascia_face_x, fascia_bot_y - 0.3],  # bottom edge (inner)
-            [fascia_face_x, drip_roof_out[1]],  # back up fascia (inner)
-        ]
-    )
-    ax.add_patch(Polygon(drip_edge, closed=True, facecolor=COL_FLASH, edgecolor="black", linewidth=1.0, zorder=9))
+    # Create clean L-shape: over roof, then down fascia (centerline path)
+    drip_centerline = [
+        drip_roof_in,
+        drip_roof_out,
+        [fascia_face_x + drip_thickness / 2, drip_roof_out[1]],
+        [fascia_face_x + drip_thickness / 2, fascia_bot_y - 0.3],
+    ]
+    _flashing(ax, drip_centerline, drip_thickness, fc=COL_FLASH, ec="black", lw=1.0, z=9, alpha=0.95)
     _leader(ax, (fascia_face_x + drip_thickness/2, (drip_roof_out[1] + fascia_bot_y) / 2), (x_exterior + 30.0, fascia_bot_y - 0.0), "Drip edge flashing wraps over\nroof edge and down fascia face")
 
     # Vented soffit: horizontal panel under overhang, from wall face to fascia

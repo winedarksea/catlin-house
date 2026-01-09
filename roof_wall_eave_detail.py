@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch, Polygon
 
-from detail_utils import COLORS, _dim_h, _dim_v, _leader, _offset_segment, _quad_from_segment, _rect, _wrap_notes
+from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _lumber, _offset_segment, _quad_from_segment, _rect, _wrap_notes
 
 
 def _thick_polyline(points, thickness):
@@ -95,6 +95,7 @@ def main():
     COL_SPRAY = COL.spray_foam
     COL_INSUL = COL.insulation
     COL_STEEL = COL.metal
+    COL_GUTTER = COL.gutter
 
     # Wall geometry (schematic, inches)
     drywall = 0.625
@@ -174,9 +175,9 @@ def main():
     ceiling_dry_poly = _layer_poly(mid0, mid1, ceiling_offset, drywall, ceiling_dry_x0, ceiling_dry_x1)
     ax.add_patch(Polygon(ceiling_dry_poly, closed=True, facecolor=COL_DRY, edgecolor="black", linewidth=1.1, zorder=2))
     
-    _rect(ax, x_stud0, y_wall_bot, stud_depth, y_top_plate_bot - y_wall_bot, fc=COL_INSUL, lw=0.9, hatch="..", z=1)
-    _rect(ax, x_stud0, y_top_plate_bot, stud_depth, plate_thick, fc=COL_WOOD, lw=1.2, z=10)
-    _rect(ax, x_stud0, y_top_plate_mid, stud_depth, plate_thick, fc=COL_WOOD, lw=1.2, z=10)
+    _rect(ax, x_stud0, y_wall_bot, stud_depth, y_top_plate_bot - y_wall_bot, fc=COL_INSUL, lw=0.9, hatch=HATCHES.compacted, z=1)
+    _lumber(ax, x_stud0, y_top_plate_bot, stud_depth, plate_thick, fc=COL_WOOD, lw=1.2, z=10)
+    _lumber(ax, x_stud0, y_top_plate_mid, stud_depth, plate_thick, fc=COL_WOOD, lw=1.2, z=10)
     _rect(ax, x_stud0, y_wall_bot, stud_depth, y_top_plate_bot - y_wall_bot, fc="none", lw=1.2, z=5)
     # Wall sheathing/membrane continue up to align with roof layers.
     _rect(ax, x_sheath0, y_wall_bot, sheathing, (y_top_plate_top + depth_ijoist) - y_wall_bot, fc=COL_SHEATH, lw=1.1, z=4)
@@ -188,7 +189,7 @@ def main():
     offset_furring_bot = depth_ijoist / 2 + sheathing_thk + membrane_thk + polyiso_roof + eps_roof + roof_mem
     fur_bot_seg0, fur_bot_seg1 = _offset_segment(mid0, mid1_ext, offset_furring_bot)
     wall_fur_top_y = _pt_at_x(fur_bot_seg0, fur_bot_seg1, x_fur1)[1]
-    _rect(ax, x_fur0, y_wall_bot, furring_wall, wall_fur_top_y - y_wall_bot, fc=COL_WOOD, lw=1.0, hatch="//", z=5)
+    _rect(ax, x_fur0, y_wall_bot, furring_wall, wall_fur_top_y - y_wall_bot, fc=COL_WOOD, lw=1.0, hatch=HATCHES.diagonal, z=5)
     _rect(ax, x_clad0, y_wall_bot, cladding, y_wall_ext - y_wall_bot, fc=COL_METAL, lw=1.1, z=6)
 
     # Roof layers along slope
@@ -247,7 +248,7 @@ def main():
             stiff_top0,
         ]
     )
-    ax.add_patch(Polygon(stiff_poly, closed=True, facecolor=COL_WOOD, edgecolor="black", linewidth=1.0, hatch="xx", zorder=4))
+    ax.add_patch(Polygon(stiff_poly, closed=True, facecolor=COL_WOOD, edgecolor="black", linewidth=1.0, hatch=HATCHES.cross, zorder=4))
 
     _leader(
         ax,
@@ -328,7 +329,7 @@ def main():
     fur_seg0, fur_seg1 = _offset_segment(mid0, mid1_ext, offset_furring_center)
     x_fur_end = x_fur1  # Align roof furring with wall furring strip
     fur_poly = _layer_poly(mid0, mid1_ext, offset_furring_center, furring_roof, -34.0, x_fur_end)
-    ax.add_patch(Polygon(fur_poly, closed=True, facecolor=COL_WOOD, edgecolor="black", linewidth=1.0, hatch="//", zorder=7))
+    ax.add_patch(Polygon(fur_poly, closed=True, facecolor=COL_WOOD, edgecolor="black", linewidth=1.0, hatch=HATCHES.diagonal, zorder=7))
     _leader(
         ax,
         _pt_at_x(fur_seg0, fur_seg1, -12.0),
@@ -445,7 +446,7 @@ def main():
             [gutter_back_x + 0.5, gutter_top_y + 0.5],
         ]
     )
-    ax.add_patch(Polygon(gutter, closed=True, facecolor=COL_STEEL, edgecolor="black", linewidth=1.0, zorder=7))
+    ax.add_patch(Polygon(gutter, closed=True, facecolor=COL_GUTTER, edgecolor="black", linewidth=1.0, zorder=7))
     _leader(
         ax,
         (gutter_back_x + gutter_depth / 2, gutter_top_y - gutter_h / 2),

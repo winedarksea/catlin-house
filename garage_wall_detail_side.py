@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch, Polygon
 
-from detail_utils import COLORS, _dim_h, _dim_v, _leader, _offset_segment, _quad_from_segment, _rect, _wrap_notes
+from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _lumber, _offset_segment, _quad_from_segment, _rect, _wrap_notes
 
 
 def _unit(v):
@@ -84,11 +84,11 @@ def main():
     COL_EPS = COL.eps
     COL_WOOD = COL.wood
     COL_DRY = COL.drywall
-    COL_GRAVEL = COL.stone
+    COL_GRAVEL = COL.aggregate
     COL_SOIL = COL.soil
     COL_METAL = COL.metal_dark
     COL_FLASH = COL.flashing
-    COL_POLY = COL.poly
+    COL_POLY = COL.membrane
     COL_XPS = COL.xps
     COL_SHEATH = COL.sheathing
     COL_UNDERLAY = COL.underlayment
@@ -135,7 +135,7 @@ def main():
         fc=COL_RIVER_ROCK,
         ec="black",
         lw=1.0,
-        hatch="o",
+        hatch=HATCHES.gravel,
         z=2,
     )
     _leader(
@@ -162,7 +162,7 @@ def main():
         fc=COL_GRAVEL,
         ec="black",
         lw=1.2,
-        hatch="..",
+        hatch=HATCHES.compacted,
         z=2,
     )
     _leader(
@@ -234,7 +234,7 @@ def main():
     # Sill, gasket, anchors (schematic)
     # -----------------------
     _rect(ax, x_stud_int, y_sill0, stud_depth, sill_gasket, fc="#FFFFFF", ec="black", lw=1.0, z=4)
-    _rect(ax, x_stud_int, y_sill0 + sill_gasket, stud_depth, sill_plate, fc=COL_WOOD, ec="black", lw=1.2, z=4)
+    _lumber(ax, x_stud_int, y_sill0 + sill_gasket, stud_depth, sill_plate, fc=COL_WOOD, ec="black", lw=1.2, z=4)
     _leader(
         ax,
         (x_stud_int + stud_depth / 2, y_sill0 + sill_gasket + sill_plate / 2),
@@ -250,7 +250,7 @@ def main():
     # Stud (one cut shown)
     _rect(ax, x_stud_int, y_sill1, stud_depth, y_topplate0 - y_sill1, fc=COL_WOOD, ec="black", lw=1.2, z=3)
     # Top plate
-    _rect(ax, x_stud_int, y_topplate0, stud_depth, top_plate, fc=COL_WOOD, ec="black", lw=1.2, z=3)
+    _lumber(ax, x_stud_int, y_topplate0, stud_depth, top_plate, fc=COL_WOOD, ec="black", lw=1.2, z=5)
     _leader(
         ax,
         (x_stud_int + stud_depth / 2, (y_sill1 + y_topplate_top) / 2),
@@ -376,7 +376,7 @@ def main():
     # Optional vapor retarder, XPS, gravel
     _rect(ax, x_slab0, grade_y - slab_thick - vapor_poly, x_slab1 - x_slab0, vapor_poly, fc=COL_POLY, ec="black", lw=0.8, ls="--", z=3)
     _rect(ax, x_slab0, grade_y - slab_thick - vapor_poly - xps, x_slab1 - x_slab0, xps, fc=COL_XPS, ec="black", lw=0.8, ls="--", z=2)
-    _rect(ax, x_slab0, grade_y - slab_thick - vapor_poly - xps - gravel, x_slab1 - x_slab0, gravel, fc=COL_GRAVEL, ec="black", lw=0.8, ls="--", hatch="..", z=1)
+    _rect(ax, x_slab0, grade_y - slab_thick - vapor_poly - xps - gravel, x_slab1 - x_slab0, gravel, fc=COL_GRAVEL, ec="black", lw=0.8, ls="--", hatch=HATCHES.compacted, z=1)
 
     _leader(
         ax,
@@ -522,7 +522,7 @@ def main():
             facecolor=COL_INSUL,
             edgecolor="black",
             linewidth=0.8,
-            hatch="..",
+            hatch=HATCHES.compacted,
             zorder=1,
         )
     )

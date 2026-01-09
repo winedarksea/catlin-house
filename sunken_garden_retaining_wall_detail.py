@@ -11,54 +11,9 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.patches import Circle, Patch
+from matplotlib.patches import Patch
 
-from detail_utils import COLORS, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
-
-
-def _pipe(ax, x, y, d, *, fc=COLORS.metal, ec="black", lw=1.1, z=6):
-    ax.add_patch(Circle((x, y), radius=d / 2, facecolor="white", edgecolor=ec, lw=lw, zorder=z))
-    ax.add_patch(Circle((x, y), radius=d / 2 - 0.25, facecolor=fc, edgecolor="none", alpha=0.85, zorder=z + 1))
-
-
-def _dotted_pipe(ax, p0, p1, d, *, z=15):
-    p0 = np.asarray(p0, dtype=float)
-    p1 = np.asarray(p1, dtype=float)
-    ax.plot(
-        [p0[0], p1[0]],
-        [p0[1], p1[1]],
-        color="black",
-        linewidth=1.6,
-        linestyle=(0, (1.0, 2.2)),
-        zorder=z,
-    )
-    for p in (p0, p1):
-        ax.add_patch(Circle((p[0], p[1]), radius=d / 2, facecolor="white", edgecolor="black", lw=1.0, zorder=z + 1))
-        ax.add_patch(
-            Circle((p[0], p[1]), radius=d / 2 - 0.25, facecolor=COLORS.metal, edgecolor="none", alpha=0.85, zorder=z + 2)
-        )
-
-
-def _rebar_L(ax, x_cover_from_face, x_face, y_base_bot, y_base_top, y_wall_top, *, hook=14.0, z=20):
-    """
-    Draw a schematic L-bar: vertical along wall, hooks into base slab.
-
-    x_face: soil-facing outer face of stem.
-    x_cover_from_face: positive distance into concrete from x_face.
-    """
-
-    x_vert = x_face + x_cover_from_face
-    y_hook = y_base_bot + 3.0
-    x_hook = x_vert + np.sign(x_cover_from_face) * hook
-
-    ax.plot([x_vert, x_vert, x_hook], [y_wall_top - 6.0, y_hook, y_hook], color="black", linewidth=1.6, zorder=z)
-    ax.add_patch(Circle((x_vert, y_base_top + 24.0), radius=0.85, facecolor="black", edgecolor="none", zorder=z + 1))
-
-
-def _rebar_h(ax, x0, x1, y, *, z=20):
-    ax.plot([x0, x1], [y, y], color="black", linewidth=1.4, zorder=z)
-    for x in (x0 + 10.0, x1 - 10.0):
-        ax.add_patch(Circle((x, y), radius=0.75, facecolor="black", edgecolor="none", zorder=z + 1))
+from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _dotted_pipe, _leader, _pipe, _poly, _rebar_L, _rebar_h, _rect, _wrap_notes
 
 
 def main():
@@ -146,7 +101,7 @@ def main():
         fc=COL_AGG,
         ec="black",
         lw=1.0,
-        hatch="..",
+        hatch=HATCHES.compacted,
         z=2,
     )
     _rect(
@@ -158,7 +113,7 @@ def main():
         fc=COL_AGG,
         ec="black",
         lw=1.0,
-        hatch="..",
+        hatch=HATCHES.compacted,
         z=2,
     )
 
@@ -180,7 +135,7 @@ def main():
     # Left toe: under toe area inside span.
     xL_toe0 = xL_in
     xL_toe1 = xL_in + toe
-    _rect(ax, xL_toe0, y_base_bot - toe_gravel_depth, xL_toe1 - xL_toe0, toe_gravel_depth, fc=COL_GRAVEL, hatch="o", lw=1.0, z=1)
+    _rect(ax, xL_toe0, y_base_bot - toe_gravel_depth, xL_toe1 - xL_toe0, toe_gravel_depth, fc=COL_GRAVEL, hatch=HATCHES.gravel, lw=1.0, z=1)
     _rect(
         ax,
         xL_toe0 - 1.5,
@@ -197,7 +152,7 @@ def main():
     # Right toe
     xR_toe0 = xR_in - toe
     xR_toe1 = xR_in
-    _rect(ax, xR_toe0, y_base_bot - toe_gravel_depth, xR_toe1 - xR_toe0, toe_gravel_depth, fc=COL_GRAVEL, hatch="o", lw=1.0, z=1)
+    _rect(ax, xR_toe0, y_base_bot - toe_gravel_depth, xR_toe1 - xR_toe0, toe_gravel_depth, fc=COL_GRAVEL, hatch=HATCHES.gravel, lw=1.0, z=1)
     _rect(
         ax,
         xR_toe0 - 1.5,
@@ -264,8 +219,8 @@ def main():
     # -----------------------
     # Raised garden outer block walls (retaining wall blocks)
     # -----------------------
-    _rect(ax, xL_block0, backfill_h, xL_block1 - xL_block0, raised_bed_h, fc=COL_BLOCK, hatch="++", lw=1.1, z=6)
-    _rect(ax, xR_block0, backfill_h, xR_block1 - xR_block0, raised_bed_h, fc=COL_BLOCK, hatch="++", lw=1.1, z=6)
+    _rect(ax, xL_block0, backfill_h, xL_block1 - xL_block0, raised_bed_h, fc=COL_BLOCK, hatch=HATCHES.dense_plus, lw=1.1, z=6)
+    _rect(ax, xR_block0, backfill_h, xR_block1 - xR_block0, raised_bed_h, fc=COL_BLOCK, hatch=HATCHES.dense_plus, lw=1.1, z=6)
 
     # -----------------------
     # Granular backfill + drain tile (geotextile wrapped) on soil side (extends above footing)
@@ -275,14 +230,14 @@ def main():
     xL_drain1 = xL_out
     y_drain0 = y_base_top
     y_drain1 = drain_backfill_h
-    _rect(ax, xL_drain0, y_drain0, xL_drain1 - xL_drain0, y_drain1 - y_drain0, fc=COL_GRAVEL, hatch="o", lw=0.9, z=2)
+    _rect(ax, xL_drain0, y_drain0, xL_drain1 - xL_drain0, y_drain1 - y_drain0, fc=COL_GRAVEL, hatch=HATCHES.gravel, lw=0.9, z=2)
     _rect(ax, xL_drain0 - 1.2, y_drain0 - 1.2, (xL_drain1 - xL_drain0) + 2.4, (y_drain1 - y_drain0) + 2.4, fc="none", ec="black", ls="--", lw=1.0, z=3)
     _pipe(ax, xL_out - drain_stone_w * 0.55, y_base_top + drain_diam * 1.0, drain_diam)
 
     # Right drain stone/backfill zone
     xR_drain0 = xR_out
     xR_drain1 = xR_out + drain_stone_w
-    _rect(ax, xR_drain0, y_drain0, xR_drain1 - xR_drain0, y_drain1 - y_drain0, fc=COL_GRAVEL, hatch="o", lw=0.9, z=2)
+    _rect(ax, xR_drain0, y_drain0, xR_drain1 - xR_drain0, y_drain1 - y_drain0, fc=COL_GRAVEL, hatch=HATCHES.gravel, lw=0.9, z=2)
     _rect(ax, xR_drain0 - 1.2, y_drain0 - 1.2, (xR_drain1 - xR_drain0) + 2.4, (y_drain1 - y_drain0) + 2.4, fc="none", ec="black", ls="--", lw=1.0, z=3)
     _pipe(ax, xR_out + drain_stone_w * 0.55, y_base_top + drain_diam * 1.0, drain_diam)
 

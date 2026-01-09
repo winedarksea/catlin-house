@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Patch, Polygon
 
-from detail_utils import COLORS, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
+from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
 
 
 def _sloped_layer(x0, x1, y0, y1, thickness):
@@ -145,12 +145,12 @@ def main():
     _poly(ax, _sloped_layer(x0, x_part, y_sauna_top_0, y_sauna_top_1, slab_thk), fc=COL_CONC, z=4)
     _poly(ax, _sloped_layer(x0, x_part, y_sauna_slab_bot_0, y_sauna_slab_bot_1, poly_sheet_thk), fc=COL_GLASS, lw=0.7, z=3)
     _poly(ax, _sloped_layer(x0, x_part, y_sauna_poly_bot_0, y_sauna_poly_bot_1, underfoam_thk), fc=COL_XPS, lw=1.0, z=2)
-    _poly(ax, _sloped_layer(x0, x_part, y_sauna_foam_bot_0, y_sauna_foam_bot_1, stone_under_thk), fc=COL_STONE, lw=0.9, hatch="o", z=1)
+    _poly(ax, _sloped_layer(x0, x_part, y_sauna_foam_bot_0, y_sauna_foam_bot_1, stone_under_thk), fc=COL_STONE, lw=0.9, hatch=HATCHES.gravel, z=1)
 
     _rect(ax, x_part, y_shower_slab_top - slab_thk, shower_L, slab_thk, fc=COL_CONC, z=4)
     _rect(ax, x_part, y_shower_slab_bot - poly_sheet_thk, shower_L, poly_sheet_thk, fc=COL_GLASS, lw=0.7, z=3)
     _rect(ax, x_part, y_shower_poly_bot - underfoam_thk, shower_L, underfoam_thk, fc=COL_XPS, lw=1.0, z=2)
-    _rect(ax, x_part, y_shower_foam_bot - stone_under_thk, shower_L, stone_under_thk, fc=COL_STONE, lw=0.9, hatch="o", z=1)
+    _rect(ax, x_part, y_shower_foam_bot - stone_under_thk, shower_L, stone_under_thk, fc=COL_STONE, lw=0.9, hatch=HATCHES.gravel, z=1)
 
     # Thermal break / isolation joint around perimeter (schematic; shown at both ends)
     _rect(ax, x0 - thermal_break_thk, y_sauna_slab_bot_0, thermal_break_thk, slab_thk, fc=COL_XPS, lw=1.0, z=6)
@@ -169,7 +169,7 @@ def main():
     _rect(ax, main_x0, y_main_slab_bot, main_slab_w, slab_thk, fc=COL_CONC, lw=1.1, z=4)
     _rect(ax, main_x0, y_main_poly_bot, main_slab_w, poly_sheet_thk, fc=COL_GLASS, lw=0.7, z=3)
     _rect(ax, main_x0, y_main_foam_bot, main_slab_w, underfoam_thk, fc=COL_XPS, lw=1.0, z=2)
-    _rect(ax, main_x0, y_main_stone_bot, main_slab_w, stone_under_thk, fc=COL_STONE, lw=0.9, hatch="o", z=1)
+    _rect(ax, main_x0, y_main_stone_bot, main_slab_w, stone_under_thk, fc=COL_STONE, lw=0.9, hatch=HATCHES.gravel, z=1)
 
     # Concrete step face at sauna/shower transition (recess)
     _rect(ax, x_part - 2.0, y_shower_slab_top, 2.0, (y_sauna_top_1 - y_shower_slab_top), fc=COL_CONC, lw=1.2, z=5)
@@ -187,7 +187,7 @@ def main():
     duck_x1 = x_part - 4.0
     duck_y0_0 = y_sauna_top_0 + mem_thk + foot_h
     duck_y0_1 = y_sauna_top_1 + mem_thk + foot_h
-    _poly(ax, _sloped_layer(duck_x0, duck_x1, duck_y0_0, duck_y0_1, duck_thk), fc=COL_WOOD, lw=1.0, hatch="..", z=11)
+    _poly(ax, _sloped_layer(duck_x0, duck_x1, duck_y0_0, duck_y0_1, duck_thk), fc=COL_WOOD, lw=1.0, hatch=HATCHES.compacted, z=11)
     for fx in [duck_x0 + 6.0, duck_x1 - 6.0]:
         fy0 = y_sauna_top_0 + (fx - x0) * (y_sauna_top_1 - y_sauna_top_0) / (x_part - x0) + mem_thk
         _rect(ax, fx, fy0, 1.2, foot_h, fc=COL_RUBBER, ec="black", lw=0.8, z=12)
@@ -222,7 +222,7 @@ def main():
     heater_h = 18.0
     heater_x0 = x0 + 6.0
     heater_y0 = y_main_ff + mem_thk
-    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc=COL_EQUIP, ec="black", lw=1.0, hatch="++", z=12)
+    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc=COL_EQUIP, ec="black", lw=1.0, hatch=HATCHES.dense_plus, z=12)
 
     # HRV exhaust above heater (pipe in wall)
     hrv_exhaust_diam = 3.0
@@ -239,9 +239,9 @@ def main():
     _rect(ax, x_part - tile_thk, y_shower_slab_top, tile_thk, shower_recess, fc=COL_TILE, lw=1.2, z=15)
     
     shower_fill_thk = max(shower_buildup_nom - shower_wall_backer_thk - tile_thk, 0)
-    _rect(ax, x_part, y_shower_slab_top, shower_L, shower_wall_backer_thk, fc=COL_POLYISO, lw=1.0, hatch="..", z=9)
+    _rect(ax, x_part, y_shower_slab_top, shower_L, shower_wall_backer_thk, fc=COL_POLYISO, lw=1.0, hatch=HATCHES.compacted, z=9)
     if shower_fill_thk > 0:
-        _rect(ax, x_part, y_shower_slab_top + shower_wall_backer_thk, shower_L, shower_fill_thk, fc=COL_POLYISO, lw=1.0, hatch="..", z=9)
+        _rect(ax, x_part, y_shower_slab_top + shower_wall_backer_thk, shower_L, shower_fill_thk, fc=COL_POLYISO, lw=1.0, hatch=HATCHES.compacted, z=9)
     _rect(ax, x_part, y_shower_slab_top + shower_buildup_nom - tile_thk, shower_L, tile_thk, fc=COL_TILE, lw=1.0, z=10)
 
     # -----------------------
@@ -290,14 +290,14 @@ def main():
     x_sauna_tg0 = x0 - tg_thk
     x_sauna_fur0 = x_sauna_tg0 - furring_thk
     x_sauna_poly0 = x_sauna_fur0 - polyiso_thk
-    _rect(ax, x0 - wall_thk, wall_y0, (x_sauna_poly0 - (x0 - wall_thk)), wall_y1 - wall_y0, fc=COL_INSUL, lw=1.0, hatch="..", z=0)
+    _rect(ax, x0 - wall_thk, wall_y0, (x_sauna_poly0 - (x0 - wall_thk)), wall_y1 - wall_y0, fc=COL_INSUL, lw=1.0, hatch=HATCHES.compacted, z=0)
     _rect(ax, x_sauna_poly0, wall_y0, polyiso_thk, y_drop_bot - wall_y0, fc=COL_POLYISO, lw=1.0, z=2)
-    _rect(ax, x_sauna_fur0, baseboard_h, furring_thk, y_ceil_tg0 - baseboard_h, fc=COL_WOOD, lw=1.0, hatch="//", z=3)
+    _rect(ax, x_sauna_fur0, baseboard_h, furring_thk, y_ceil_tg0 - baseboard_h, fc=COL_WOOD, lw=1.0, hatch=HATCHES.diagonal, z=3)
     _rect(ax, x_sauna_tg0, baseboard_h, tg_thk, y_ceil_tg0 - baseboard_h, fc=COL_WOOD, lw=1.1, z=4)
     _rect(ax, x_sauna_fur0, wall_y0, baseboard_thk, baseboard_h, fc=COL_FC, lw=1.1, z=5)
 
     # Shower end wall (right) with foam tile backer to ceiling
-    _rect(ax, x1, wall_y0 - shower_recess, stud_depth, wall_y1 - (wall_y0 - shower_recess), fc=COL_INSUL, lw=1.0, hatch="..", z=0)
+    _rect(ax, x1, wall_y0 - shower_recess, stud_depth, wall_y1 - (wall_y0 - shower_recess), fc=COL_INSUL, lw=1.0, hatch=HATCHES.compacted, z=0)
     _rect(ax, x1, wall_y0 - shower_recess, shower_wall_backer_thk, wall_y1 - (wall_y0 - shower_recess), fc=COL_POLYISO, lw=1.0, z=2)
     _rect(ax, x1 - shower_wall_backer_thk, wall_y0 - shower_recess, tile_thk, wall_y1 - (wall_y0 - shower_recess), fc=COL_TILE, lw=1.0, z=3)
     _rect(ax, x1 + stud_depth, wall_y0 - shower_recess, drywall_thk, wall_y1 - (wall_y0 - shower_recess), fc=COL_DRY, lw=1.0, z=1)
@@ -305,7 +305,7 @@ def main():
     # Joists above (schematic)
     joist_band_x0 = x0 - 10.0
     joist_band_w = (x1 - x0) + 20.0
-    _rect(ax, joist_band_x0, y_joist_bot, joist_band_w, joist_depth, fc=COL_WOOD, lw=1.2, hatch="\\\\", z=2)
+    _rect(ax, joist_band_x0, y_joist_bot, joist_band_w, joist_depth, fc=COL_WOOD, lw=1.2, hatch=HATCHES.joist, z=2)
     joist_oc = 16.0
     for jx in np.arange(x0, x1 + 1e-6, joist_oc):
         ax.plot([jx, jx], [y_joist_bot, y_joist_top], color="black", lw=0.7, alpha=0.65, zorder=3)
@@ -314,7 +314,7 @@ def main():
     # Framing extends over side walls
     drop_frame_x0 = x0 - wall_thk
     drop_frame_w = (x1 - x0) + wall_thk + stud_depth + drywall_thk
-    _rect(ax, drop_frame_x0, y_drop_bot, drop_frame_w, drop_depth, fc=COL_WOOD, lw=1.1, hatch="xx", z=4, alpha=0.9)
+    _rect(ax, drop_frame_x0, y_drop_bot, drop_frame_w, drop_depth, fc=COL_WOOD, lw=1.1, hatch=HATCHES.cross, z=4, alpha=0.9)
     # Polyiso on left extends 2" past x0, but not over right wall
     poly_extend_left = 2.0
     drop_poly_x0 = x0 - poly_extend_left
@@ -323,7 +323,7 @@ def main():
     # Furring and T&G stay at original extent
     drop_x0 = x0
     drop_w = (x1 - x0)
-    _rect(ax, drop_x0, y_ceil_fur0, drop_w, furring_thk, fc=COL_WOOD, lw=1.0, hatch="//", z=6)
+    _rect(ax, drop_x0, y_ceil_fur0, drop_w, furring_thk, fc=COL_WOOD, lw=1.0, hatch=HATCHES.diagonal, z=6)
     _rect(ax, drop_x0, y_ceil_tg0, drop_w, tg_thk, fc=COL_WOOD, lw=1.1, z=7)
 
     # -----------------------
@@ -357,7 +357,7 @@ def main():
     buildup0 = y_tile_at_door - y_slab_top - tile_thk
     buildup1 = y_tile_at_drain - y_slab_top - tile_thk
     base_backer_thk = shower_wall_backer_thk
-    _rect(ax_in, 0.0, y_slab_top, sh_w, base_backer_thk, fc=COL_POLYISO, lw=0.9, hatch="..", z=2.5)
+    _rect(ax_in, 0.0, y_slab_top, sh_w, base_backer_thk, fc=COL_POLYISO, lw=0.9, hatch=HATCHES.compacted, z=2.5)
     fill0 = max(buildup0 - base_backer_thk, 0)
     fill1 = max(buildup1 - base_backer_thk, 0)
     _poly(
@@ -371,7 +371,7 @@ def main():
         fc=COL_POLYISO,
         ec="black",
         lw=0.9,
-        hatch="..",
+        hatch=HATCHES.compacted,
         z=3,
     )
     _poly(

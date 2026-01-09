@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Patch, Polygon
 
-from detail_utils import COLORS, _dim_h, _dim_v, _leader, _rect, _wrap_notes
+from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _lumber, _rect, _wrap_notes
 
 
 def main():
@@ -14,7 +14,7 @@ def main():
     # Colors
     COL = COLORS
     COL_CONC = COL.concrete
-    COL_STONE = COL.stone
+    COL_STONE = COL.aggregate
     COL_WOOD = COL.wood
     COL_POLYISO = COL.polyiso
     COL_XPS = COL.xps
@@ -24,7 +24,7 @@ def main():
     COL_RUBBER = COL.rubber
     COL_INSUL = COL.insulation
     COL_SEALANT = COL.sealant
-    COL_POLY = COL.poly
+    COL_POLY = COL.membrane
     COL_EQUIP = COL.equipment
     COL_DRY = COL.drywall
 
@@ -126,8 +126,8 @@ def main():
     # Concrete wall + footing
     # -----------------------
     _rect(ax, x_conc_ext, y_foot0, conc_wall_thk, (y_joist_top - y_foot0), fc=COL_CONC, lw=1.2, z=2)
-    _rect(ax, x_foot0, y_foot1, footing_w, footing_d, fc=COL_CONC, lw=1.2, hatch="..", z=2)
-    _rect(ax, x_stone0, y_stone1, (x_stone1 - x_stone0), stone_base_thk, fc=COL_STONE, lw=1.0, hatch="o", z=1)
+    _rect(ax, x_foot0, y_foot1, footing_w, footing_d, fc=COL_CONC, lw=1.2, hatch=HATCHES.compacted, z=2)
+    _rect(ax, x_stone0, y_stone1, (x_stone1 - x_stone0), stone_base_thk, fc=COL_STONE, lw=1.0, hatch=HATCHES.gravel, z=1)
 
     # French drain in wider stone (not under footing)
     drain_x = x_stone0 + drain_diam * 0.8
@@ -145,7 +145,7 @@ def main():
     _rect(ax, slab_x0, y_slab_bot, slab_x1 - slab_x0, slab_thk, fc=COL_CONC, lw=1.2, z=2)
     _rect(ax, slab_x0, y_poly_bot, slab_x1 - slab_x0, poly_sheet_thk, fc=COL_POLY, ec="black", lw=0.6, z=1)
     _rect(ax, slab_x0, y_xps_bot, slab_x1 - slab_x0, xps_under_thk, fc=COL_XPS, lw=1.0, z=1)
-    _rect(ax, slab_x0, y_stone_under_bot, slab_x1 - slab_x0, stone_under_slab, fc=COL_STONE, lw=0.9, hatch="o", z=0)
+    _rect(ax, slab_x0, y_stone_under_bot, slab_x1 - slab_x0, stone_under_slab, fc=COL_STONE, lw=0.9, hatch=HATCHES.gravel, z=0)
 
     # Thermal break at right edge (sauna slab to adjacent slab / room, schematic)
     slab_break_x0 = slab_x1
@@ -158,13 +158,13 @@ def main():
     # Right wall framing (2x4 with optional R-13)
     # -----------------------
     plate_thk = 1.5
-    _rect(ax, x_stud0, y_slab_top, stud_depth, plate_thk, fc=COL_WOOD, lw=1.2, z=6)
-    _rect(ax, x_stud0, y_slab_top + plate_thk, stud_depth, (y_joist_bot - (y_slab_top + plate_thk)), fc=COL_INSUL, lw=1.0, hatch="..", z=1)
+    _lumber(ax, x_stud0, y_slab_top, stud_depth, plate_thk, fc=COL_WOOD, lw=1.2, z=6)
+    _rect(ax, x_stud0, y_slab_top + plate_thk, stud_depth, (y_joist_bot - (y_slab_top + plate_thk)), fc=COL_INSUL, lw=1.0, hatch=HATCHES.compacted, z=1)
     _rect(ax, x_dry0, y_slab_top, drywall, (y_joist_bot - y_slab_top), fc=COL_DRY, lw=1.0, z=0)
 
     # Left wall framing against concrete (supports drop ceiling)
-    _rect(ax, x_studL0, y_slab_top, stud_depth, plate_thk, fc=COL_WOOD, lw=1.2, z=6)
-    _rect(ax, x_studL0, y_slab_top + plate_thk, stud_depth, (y_drop_bot - (y_slab_top + plate_thk)), fc=COL_INSUL, lw=1.0, hatch="..", z=1)
+    _lumber(ax, x_studL0, y_slab_top, stud_depth, plate_thk, fc=COL_WOOD, lw=1.2, z=6)
+    _rect(ax, x_studL0, y_slab_top + plate_thk, stud_depth, (y_drop_bot - (y_slab_top + plate_thk)), fc=COL_INSUL, lw=1.0, hatch=HATCHES.compacted, z=1)
 
     # -----------------------
     # Sauna interior wall & ceiling finishes
@@ -179,14 +179,14 @@ def main():
     _rect(ax, x_polyL1, y_ceil_poly0, (x_polyR0 - x_polyL1), polyiso_thk, fc=COL_POLYISO, lw=1.0, z=4)
 
     # Furring + T&G walls (stop at ceiling interior face)
-    _rect(ax, x_furL0, baseboard_h, furring_thk, (y_ceil_tg0 - baseboard_h), fc=COL_WOOD, lw=1.0, hatch="//", z=6)
+    _rect(ax, x_furL0, baseboard_h, furring_thk, (y_ceil_tg0 - baseboard_h), fc=COL_WOOD, lw=1.0, hatch=HATCHES.diagonal, z=6)
     _rect(ax, x_tgL0, baseboard_h, tg_thk, (y_ceil_tg0 - baseboard_h), fc=COL_WOOD, lw=1.1, z=7)
 
-    _rect(ax, x_furR0, baseboard_h, furring_thk, (y_ceil_tg0 - baseboard_h), fc=COL_WOOD, lw=1.0, hatch="//", z=6)
+    _rect(ax, x_furR0, baseboard_h, furring_thk, (y_ceil_tg0 - baseboard_h), fc=COL_WOOD, lw=1.0, hatch=HATCHES.diagonal, z=6)
     _rect(ax, x_tgR0, baseboard_h, tg_thk, (y_ceil_tg0 - baseboard_h), fc=COL_WOOD, lw=1.1, z=7)
 
     # Ceiling furring + T&G (span between inside faces)
-    _rect(ax, x_furL1, y_ceil_fur0, (x_furR0 - x_furL1), furring_thk, fc=COL_WOOD, lw=1.0, hatch="//", z=6)
+    _rect(ax, x_furL1, y_ceil_fur0, (x_furR0 - x_furL1), furring_thk, fc=COL_WOOD, lw=1.0, hatch=HATCHES.diagonal, z=6)
     _rect(ax, x_sauna_left, y_ceil_tg0, (x_sauna_right - x_sauna_left), tg_thk, fc=COL_WOOD, lw=1.1, z=7)
 
     # Fiber cement baseboard (replaces furring + T&G at bottom 6")
@@ -227,7 +227,7 @@ def main():
     _rect(ax, x_sauna_right - mem_thk, y_slab_top, mem_thk, baseboard_h, fc=COL_MEM, lw=0.8, z=10)
 
     # Dropped ceiling framing (2x4s below primary structure)
-    _rect(ax, x_studL0, y_drop_bot, (x_stud0 + stud_depth - x_studL0), drop_depth, fc=COL_WOOD, lw=1.1, hatch="xx", z=5)
+    _rect(ax, x_studL0, y_drop_bot, (x_stud0 + stud_depth - x_studL0), drop_depth, fc=COL_WOOD, lw=1.1, hatch=HATCHES.cross, z=5)
 
     # Duckboards on rubber feet (schematic)
     duck_thk = 1.0
@@ -235,7 +235,7 @@ def main():
     duck_y0 = y_slab_top + mem_thk + foot_h
     duck_x0 = x_sauna_left + 4.0
     duck_x1 = x_sauna_right - 4.0
-    _rect(ax, duck_x0, duck_y0, duck_x1 - duck_x0, duck_thk, fc=COL_WOOD, lw=1.0, hatch="..", z=11)
+    _rect(ax, duck_x0, duck_y0, duck_x1 - duck_x0, duck_thk, fc=COL_WOOD, lw=1.0, hatch=HATCHES.compacted, z=11)
     for fx in [duck_x0 + 6.0, duck_x1 - 6.0]:
         _rect(ax, fx, y_slab_top + mem_thk, 1.2, foot_h, fc=COL_RUBBER, ec="black", lw=0.8, z=12)
 
@@ -254,10 +254,10 @@ def main():
     heater_h = 18.0
     heater_x0 = x_sauna_left + 6.0
     heater_y0 = y_slab_top + mem_thk
-    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc=COL_EQUIP, ec="black", lw=1.0, hatch="++", z=12)
+    _rect(ax, heater_x0, heater_y0, heater_w, heater_h, fc=COL_EQUIP, ec="black", lw=1.0, hatch=HATCHES.dense_plus, z=12)
 
     # Joists above (schematic)
-    _rect(ax, x_conc_ext - 6.0, y_joist_bot, (x_dry1 - (x_conc_ext - 6.0)) + 8.0, joist_depth, fc=COL_WOOD, lw=1.2, hatch="\\\\", z=3)
+    _rect(ax, x_conc_ext - 6.0, y_joist_bot, (x_dry1 - (x_conc_ext - 6.0)) + 8.0, joist_depth, fc=COL_WOOD, lw=1.2, hatch=HATCHES.joist, z=3)
 
     # -----------------------
     # Labels / leaders

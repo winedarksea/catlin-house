@@ -5,7 +5,7 @@ from matplotlib.path import Path
 
 # ============= CONFIGURATION =============
 # House dimensions
-HOUSE_WIDTH = 38.0
+HOUSE_WIDTH = 36.0
 VISIBLE_BASEMENT = 3.0
 FLOOR_HEIGHT = 10.0
 
@@ -177,7 +177,8 @@ def draw_house(ax, porch_x0, title, roof_type, version):
     # For version 1: add 32" (2.67') charcoal gray panels on each side extending to roof peak
     # Draw AFTER roof so they overlay on top
     if version == 1:
-        gray_width = 32.0 / 12.0  # 32 inches = 2.67 feet
+        color_area_width = 16.0  # recommended it be equal to multiples of 16", seam OC spacing
+        gray_width = color_area_width / 12.0  # 32 inches = 2.67 feet
         # Left side gray panel - extends to top of roof
         left_top_y = roof_height_at_x(0, roof_type, y3, house_w=house_w)
         left_roof_y = roof_height_at_x(gray_width, roof_type, y3, house_w=house_w)
@@ -250,7 +251,7 @@ def draw_house(ax, porch_x0, title, roof_type, version):
     ax.plot([house_w, ax.get_xlim()[1]], [y_grade, y_grade], linewidth=2, color="0.0")  # Right extension
 
     ax.set_title(title, fontsize=12, weight="bold")
-    ax.text(0, y3 + 11.2, "38' main width", fontsize=10, color="0.25", va="bottom")
+    ax.text(0, y3 + 11.2, f"{HOUSE_WIDTH}' main width", fontsize=10, color="0.25", va="bottom")
 
     if show_floor_lines:
         ax.plot([0, house_w], [y1, y1], color="0.70", linewidth=1)

@@ -2,7 +2,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Patch, Polygon
 
-from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _french_drain, _leader, _lumber, _rect, _slab_assembly, _wrap_notes
+from detail_utils import (
+    COLORS,
+    HATCHES,
+    BasementConcreteWallAssembly,
+    _dim_h,
+    _dim_v,
+    _french_drain,
+    _leader,
+    _lumber,
+    _rect,
+    _slab_assembly,
+    _wrap_notes,
+)
 
 
 def main():
@@ -43,7 +55,7 @@ def main():
 
     slab_thk = 4.0
     xps_under_thk = 2.0  # R-10 XPS (typically 2")
-    poly_sheet_thk = 0.05  # schematic only
+    vapor_sheet_thk = 0.05  # schematic only
     stone_under_slab = 4.0
 
     thermal_break_thk = 1.0  # 1" XPS at slab perimeter
@@ -62,9 +74,13 @@ def main():
     joist_depth = 9.25  # 2x10 (schematic)
     drop_depth = 3.5  # 2x4 dropped ceiling framing
 
-    # Reference lines
-    x_conc_int = 0.0
-    x_conc_ext = x_conc_int - conc_wall_thk
+    # Define footing position first (independent reference point)
+    footing_center_x = 0.0  # footing and aggregate are correctly positioned here
+    
+    # Calculate concrete wall position (centered over footing)
+    x_conc_center = footing_center_x
+    x_conc_ext = x_conc_center - conc_wall_thk / 2
+    x_conc_int = x_conc_ext + conc_wall_thk
 
     # Left wall framing against concrete (supports drop ceiling)
     gap_to_conc = 0.5
@@ -108,12 +124,12 @@ def main():
     # -----------------------
     y_slab_bot = y_slab_top - slab_thk
     # Typical radon/vapor barrier location is directly under the slab.
-    y_poly_bot = y_slab_bot - poly_sheet_thk
-    y_xps_bot = y_poly_bot - xps_under_thk
+    y_vapor_bot = y_slab_bot - vapor_sheet_thk
+    y_xps_bot = y_vapor_bot - xps_under_thk
     y_stone_under_bot = y_xps_bot - stone_under_slab
 
-    # Foundation / footing layout (x positions). Footing starts just below slab + insulation.
-    x_foot0 = (x_conc_int - conc_wall_thk / 2) - footing_w / 2
+    # Foundation / footing layout (x positions) - based on footing center position
+    x_foot0 = footing_center_x - footing_w / 2
     x_foot1 = x_foot0 + footing_w
     x_stone0 = x_foot0 - stone_base_extra
     x_stone1 = x_foot1 + stone_base_extra
@@ -151,7 +167,7 @@ def main():
         y_slab_top,
         slab_thk=slab_thk,
         xps_thk=xps_under_thk,
-        poly_thk=poly_sheet_thk,
+        vapor_thk=vapor_sheet_thk,
         stone_thk=stone_under_slab,
         thermal_break_side='none',  # We handle thermal breaks separately for sauna
         show_stone=True,
@@ -350,7 +366,7 @@ def main():
     )
     _leader(
         ax,
-        (slab_x0 + 30.0, y_poly_bot + poly_sheet_thk / 2),
+        (slab_x0 + 30.0, y_vapor_bot + vapor_sheet_thk / 2),
         (x_dry1 + 16.0, -44.0),
         "10 mil (min) polyethylene\nradon / vapor barrier",
     )

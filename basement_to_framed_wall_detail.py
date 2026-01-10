@@ -21,6 +21,8 @@ from detail_utils import (
     _french_drain,
     _leader,
     _lumber,
+    BasementConcreteWallAssembly,
+    ExteriorWoodWallAssembly,
     _path_from_steps,
     _rect,
     _slab_assembly,
@@ -55,34 +57,40 @@ def main():
 
     furring = 0.5
     cladding = 0.5
-
-    x_foam_outer = 0.0
-    x_foam_inner = x_foam_outer - (polyiso_wall + eps_wall)  # = -4.0
-
-    # Place membrane on the exterior face of sheathing/concrete, inside the foam layer.
-    x_mem0 = x_foam_inner - membrane_thk
-    x_mem1 = x_foam_inner
-    x_poly0 = x_foam_inner
-    x_poly1 = x_poly0 + polyiso_wall
-    x_eps0 = x_poly1
-    x_eps1 = x_eps0 + eps_wall
-
-    x_fur0 = x_foam_outer
-    x_fur1 = x_fur0 + furring
-    x_clad0 = x_fur1
-    x_clad1 = x_clad0 + cladding
-
-    x_sheath1 = x_mem0
-    x_sheath0 = x_sheath1 - sheathing
-    x_stud1 = x_sheath0
-    x_stud0 = x_stud1 - stud_depth
-    x_dry1 = x_stud0
-    x_dry0 = x_dry1 - drywall
-
-    # Foundation wall aligned to the sheathing plane for membrane continuity
     conc_wall_thk = 12.0
-    x_conc_ext = x_sheath1
-    x_conc_int = x_conc_ext - conc_wall_thk
+
+    wall_layers = ExteriorWoodWallAssembly(
+        drywall=drywall,
+        stud_depth=stud_depth,
+        sheathing=sheathing,
+        membrane=membrane_thk,
+        polyiso=polyiso_wall,
+        eps=eps_wall,
+        furring=furring,
+        cladding=cladding,
+        x_clad1=1.0,
+    ).coords()
+    x_dry0, x_dry1 = wall_layers["drywall"]
+    x_stud0, x_stud1 = wall_layers["stud"]
+    x_sheath0, x_sheath1 = wall_layers["sheathing"]
+    x_mem0, x_mem1 = wall_layers["membrane"]
+    x_poly0, x_poly1 = wall_layers["polyiso"]
+    x_eps0, x_eps1 = wall_layers["eps"]
+    x_fur0, x_fur1 = wall_layers["furring"]
+    x_clad0, x_clad1 = wall_layers["cladding"]
+    x_foam_inner = x_poly0
+    x_foam_outer = x_eps1
+
+    conc_layers = BasementConcreteWallAssembly(
+        conc_thk=conc_wall_thk,
+        membrane=membrane_thk,
+        polyiso=polyiso_wall,
+        eps=eps_wall,
+        furring=furring,
+        cladding=cladding,
+        x_clad1=x_clad1,
+    ).coords()
+    x_conc_int, x_conc_ext = conc_layers["concrete"]
 
     # Interior slab assembly (at grade level)
     slab_thk = 4.0

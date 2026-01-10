@@ -9,6 +9,7 @@ from detail_utils import (
     _dim_v,
     _flashing,
     _leader,
+    ExteriorWoodWallAssembly,
     _lumber,
     _offset_segment,
     _quad_from_segment,
@@ -88,6 +89,25 @@ def main():
     cladding = 0.5
     plate_thick = 1.5  # each top plate
 
+    wall_layers = ExteriorWoodWallAssembly(
+        drywall=drywall,
+        stud_depth=stud_depth,
+        sheathing=sheathing,
+        membrane=0.0,  # membrane is drawn visually; geometry stays aligned with original figure
+        polyiso=polyiso_wall,
+        eps=eps_wall,
+        furring=furring_wall,
+        cladding=cladding,
+        x_clad1=1.0,
+    ).coords()
+    x_dry0, x_dry1 = wall_layers["drywall"]
+    x_stud0, x_stud1 = wall_layers["stud"]
+    x_sheath0, x_sheath1 = wall_layers["sheathing"]
+    x_poly0, x_poly1 = wall_layers["polyiso"]
+    x_eps0, x_eps1 = wall_layers["eps"]
+    x_fur0, x_fur1 = wall_layers["furring"]
+    x_clad0, x_clad1 = wall_layers["cladding"]
+
     wall_show_height = 32.0  # portion shown below top plates
     y_top_plate_top = 0.0
     y_top_plate_mid = y_top_plate_top - plate_thick
@@ -95,21 +115,6 @@ def main():
     y_wall_bot = y_top_plate_bot - wall_show_height
 
     # X positions (interior negative, exterior positive)
-    x_dry0 = -8.75
-    x_dry1 = x_dry0 + drywall
-    x_stud0 = x_dry1
-    x_stud1 = x_stud0 + stud_depth
-    x_sheath0 = x_stud1
-    x_sheath1 = x_sheath0 + sheathing
-    x_poly0 = x_sheath1
-    x_poly1 = x_poly0 + polyiso_wall
-    x_eps0 = x_poly1
-    x_eps1 = x_eps0 + eps_wall
-    x_fur0 = x_eps1
-    x_fur1 = x_fur0 + furring_wall
-    x_clad0 = x_fur1
-    x_clad1 = x_clad0 + cladding
-
     # Roof geometry (precompute here so the wall extension can align cleanly)
     roof_pitch = -4 / 12  # slope down to exterior
     depth_ijoist = 11.875

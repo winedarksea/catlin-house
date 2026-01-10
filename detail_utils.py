@@ -3,7 +3,9 @@ Shared helper functions for plotting construction detail schematics.
 """
 
 import textwrap
+from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
@@ -49,6 +51,8 @@ HATCHES = SimpleNamespace(
     joist="\\\\",
     dense_plus="++",
 )
+
+LayerMap = Dict[str, Tuple[float, float]]
 
 
 def _wrap_notes(lines, width=58):
@@ -409,3 +413,110 @@ def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, vapor_thk=0.
         'xps_bot': y_xps_bot,
         'stone_bot': y_stone_bot
     }
+
+
+def _translate_layers(layers: LayerMap, dx: float) -> LayerMap:
+    """Shift a layer coordinate map by dx."""
+    if abs(dx) < 1e-9:
+        return layers
+    return {k: (v[0] + dx, v[1] + dx) for k, v in layers.items()}
+
+
+@dataclass
+class ExteriorWoodWallAssembly:
+    """
+    Layered exterior stud wall with continuous insulation.
+
+    Coordinates are returned as (x0, x1) tuples running interior->exterior.
+    `membrane` is a real thickness; if you want a visual-only membrane that
+    does not push out foam, set membrane=0 and draw the membrane separately.
+    """
+
+    drywall: float
+    stud_depth: float
+    sheathing: float
+    membrane: float
+    polyiso: float
+    eps: float
+    furring: float
+    cladding: float
+    x_clad1: float = 1.0  # default exterior face reference
+
+    def coords(self, *, x_clad1: Optional[float] = None, dx: float = 0.0) -> LayerMap:
+        xc1 = self.x_clad1 if x_clad1 is None else x_clad1
+        x_clad0 = xc1 - self.cladding
+        x_fur1 = x_clad0
+        x_fur0 = x_fur1 - self.furring
+        x_eps1 = x_fur0
+        x_eps0 = x_eps1 - self.eps
+        x_poly1 = x_eps0
+        x_poly0 = x_poly1 - self.polyiso
+        x_mem1 = x_poly0
+        x_mem0 = x_mem1 - self.membrane
+        x_sheath1 = x_mem0
+        x_sheath0 = x_sheath1 - self.sheathing
+        x_stud1 = x_sheath0
+        x_stud0 = x_stud1 - self.stud_depth
+        x_dry1 = x_stud0
+        x_dry0 = x_dry1 - self.drywall
+
+        layers: LayerMap = {
+            "drywall": (x_dry0, x_dry1),
+            "stud": (x_stud0, x_stud1),
+            "sheathing": (x_sheath0, x_sheath1),
+            "membrane": (x_mem0, x_mem1),
+            "polyiso": (x_poly0, x_poly1),
+            "eps": (x_eps0, x_eps1),
+            "furring": (x_fur0, x_fur1),
+            "cladding": (x_clad0, xc1),
+        }
+        layers = _translate_layers(layers, dx)
+        layers["interior_face"] = layers["drywall"][0]
+        layers["stud_face"] = layers["stud"][1]
+        layers["sheathing_face"] = layers["sheathing"][1]
+        layers["exterior_face"] = layers["cladding"][1]
+        return layers
+
+
+@dataclass
+class BasementConcreteWallAssembly:
+    """
+    Exterior concrete wall with optional continuous insulation/furring/cladding.
+
+    Coordinates are returned as (x0, x1) tuples running interior->exterior.
+    """
+
+    conc_thk: float
+    membrane: float
+    polyiso: float
+    eps: float
+    furring: float
+    cladding: float
+    x_clad1: float = 1.0
+
+    def coords(self, *, x_clad1: Optional[float] = None, dx: float = 0.0) -> LayerMap:
+        xc1 = self.x_clad1 if x_clad1 is None else x_clad1
+        x_clad0 = xc1 - self.cladding
+        x_fur1 = x_clad0
+        x_fur0 = x_fur1 - self.furring
+        x_eps1 = x_fur0
+        x_eps0 = x_eps1 - self.eps
+        x_poly1 = x_eps0
+        x_poly0 = x_poly1 - self.polyiso
+        x_mem1 = x_poly0
+        x_mem0 = x_mem1 - self.membrane
+        x_conc_ext = x_mem0
+        x_conc_int = x_conc_ext - self.conc_thk
+
+        layers: LayerMap = {
+            "concrete": (x_conc_int, x_conc_ext),
+            "membrane": (x_mem0, x_mem1),
+            "polyiso": (x_poly0, x_poly1),
+            "eps": (x_eps0, x_eps1),
+            "furring": (x_fur0, x_fur1),
+            "cladding": (x_clad0, xc1),
+        }
+        layers = _translate_layers(layers, dx)
+        layers["interior_face"] = layers["concrete"][0]
+        layers["exterior_face"] = layers["cladding"][1]
+        return layers

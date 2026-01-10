@@ -35,9 +35,9 @@ def main():
     ax_notes = fig.add_subplot(gs[0, 1])
 
     # Units: inches (schematic)
-    grade_y = 0.0
+    grade_y = 12.0  # raised 1' to reduce figure height
     basement_above_grade = 24.0  # top 2' shown above grade
-    basement_wall_height = 96.0  # 8' shown
+    basement_wall_height = 48.0  # 4' shown
 
     y_conc_top = grade_y + basement_above_grade
     y_conc_bot = y_conc_top - basement_wall_height
@@ -139,57 +139,32 @@ def main():
     ax.text(x_clad1 + 18.0, grade_y - 1.8, "Slope: 6\" per 10' away from foundation", fontsize=9, ha="center", va="top", style="italic")
 
     # -----------------------
-    # Foundation + footing (schematic)
+    # Interior slab assembly (basement floor)
     # -----------------------
-    footing_w = 24.0
+    # Slab at basement floor level, extending into basement (negative X direction)
+    basement_floor_y = y_conc_bot + 2.0
+    slab_x0 = x_conc_int - slab_width
+    slab_x1 = x_conc_int
+    
+    # Calculate footing position first (needs to connect to bottom of concrete wall)
+    footing_w = 20.0
     footing_d = 8.0
-    stone_base = 6.0
-    drain_diam = 4.0
-    stone_base_extra = 8.0  # additional width for french drain area
-
-    y_foot_top = y_conc_bot
-    y_foot_bot = y_foot_top - footing_d
-    y_stone_bot = y_foot_bot - stone_base
-
+    stone_base_thk = 6.0
+    
+    # Footing starts at bottom of concrete wall
+    y_foot0 = y_conc_bot
+    y_foot1 = y_foot0 - footing_d
+    y_stone0 = y_foot1
+    y_stone1 = y_stone0 - stone_base_thk
+    
+    # Center footing under the concrete wall
     x_foot0 = (x_conc_int + x_conc_ext) / 2 - footing_w / 2
     x_foot1 = x_foot0 + footing_w
     
-    # Extended aggregate base (wider on exterior side for french drain)
-    x_stone0 = x_foot0 - stone_base_extra
-    x_stone1 = x_foot1 + stone_base_extra
-
-    _rect(ax, x_conc_int, y_conc_bot, conc_wall_thk, y_conc_top - y_conc_bot, fc=COL_CONC, lw=1.2, z=2)
-    _rect(ax, x_foot0, y_foot_bot, footing_w, footing_d, fc=COL_CONC, lw=1.2, hatch=HATCHES.compacted, z=2)
-    _rect(ax, x_stone0, y_stone_bot, x_stone1 - x_stone0, stone_base, fc=COL.aggregate, lw=1.0, hatch=HATCHES.gravel, z=1)
+    # Calculate slab position relative to footing (slab XPS bottom is 2" above footing top, matching sauna)
+    slab_xps_bot = y_foot0 + 2.0
+    basement_floor_y = slab_xps_bot + xps_under_thk + poly_sheet_thk + slab_thk
     
-    # Additional aggregate in front of footing (exterior side, equal to footing height)
-    aggregate_front_height = footing_d  # equal to footing height
-    aggregate_front_width = stone_base_extra + 4.0
-    _rect(
-        ax,
-        x_foot1,
-        y_foot_bot,
-        aggregate_front_width,
-        aggregate_front_height,
-        fc=COL.aggregate,
-        ec="black",
-        lw=1.0,
-        hatch=HATCHES.compacted,
-        z=2,
-    )
-    
-    # French drain (in wider stone area, not under footing)
-    drain_x = x_stone0 + drain_diam * 0.8
-    drain_y = y_stone_bot + stone_base / 2
-    _french_drain(ax, drain_x, drain_y, drain_diam, fc=COL_METAL, z=3)
-
-    # -----------------------
-    # Interior slab assembly (basement floor)
-    # -----------------------
-    # Slab at basement floor level (just above footing), extending into basement (negative X direction)
-    basement_floor_y = y_conc_bot + 2.0  # slightly above footing
-    slab_x0 = x_conc_int - slab_width
-    slab_x1 = x_conc_int
     slab_layers = _slab_assembly(
         ax,
         slab_x0,
@@ -197,7 +172,7 @@ def main():
         basement_floor_y,
         slab_thk=slab_thk,
         xps_thk=xps_under_thk,
-        poly_thk=poly_sheet_thk,
+        vapor_thk=poly_sheet_thk,
         stone_thk=stone_under_slab,
         thermal_break_thk=thermal_break_thk,
         sealant_thk=sealant_thk,
@@ -205,6 +180,22 @@ def main():
         thermal_break_x=x_conc_int - thermal_break_thk,
         show_stone=True,
     )
+    
+    # Single consistent aggregate base (wider than footing for french drain)
+    stone_base_extra = 8.0
+    drain_diam = 4.0
+    x_stone0 = x_foot0 - stone_base_extra
+    x_stone1 = x_foot1 + stone_base_extra
+
+    _rect(ax, x_conc_int, y_conc_bot, conc_wall_thk, y_conc_top - y_conc_bot, fc=COL_CONC, lw=1.2, z=2)
+    _rect(ax, x_foot0, y_foot1, footing_w, footing_d, fc=COL_CONC, lw=1.2, hatch=HATCHES.compacted, z=2)
+    _rect(ax, x_stone0, y_stone1, x_stone1 - x_stone0, stone_base_thk, fc=COL.aggregate, lw=1.0, hatch=HATCHES.gravel, z=1)
+    
+    # French drain (in wider stone area, not under footing)
+    drain_x = x_stone0 + drain_diam * 0.8
+    drain_y = y_stone1 + stone_base_thk / 2
+    _french_drain(ax, drain_x, drain_y, drain_diam, fc=COL_METAL, z=3)
+    _french_drain(ax, drain_x, drain_y, drain_diam, fc=COL_METAL, z=3)
 
     # -----------------------
     # Air/water barrier continuity (liquid membrane) + insulation
@@ -329,16 +320,17 @@ def main():
     _leader(
         ax,
         xy=(drain_x, drain_y),
-        text_xy=(x_clad1 + 5.0, y_foot_bot - 4.0),
-        text='4" perforated french drain in washed stone\n(wider area, not under footing)',
+        text_xy=(x_clad1 + 5.0, y_foot1 - 6.0),
+        text='4" perforated french drain\nin washed stone (wider area,\nnot under footing)',
         ha="left",
     )
     _leader(
         ax,
-        xy=(x_foot1 + aggregate_front_width / 2, y_foot_bot + aggregate_front_height / 2),
-        text_xy=(x_clad1 + 5.0, y_foot_bot + 2.0),
-        text='Compacted aggregate in front of footing\n(geotextile-lined, equal to footing height)',
-        ha="left",
+        xy=((x_foot0 + x_foot1) / 2, (y_foot0 + y_foot1) / 2),
+        text_xy=(x_dry0 - 12.0, y_foot1 + 2.0),
+        text='20"×8" footing (5000 psi)\non 6" compacted aggregate\n(geotextile-lined)',
+        ha="right",
+        va="center",
     )
     _leader(
         ax,
@@ -378,10 +370,10 @@ def main():
     )
 
     ax.set_title("Basement to Wood-Framed Wall Transition Detail", fontsize=13, fontweight="bold", loc="center", pad=12)
-    ax.text(x_conc_int + 30.0, y_stone_bot - 8.0, "Colin Catlin, 2026", ha="center", va="top", fontsize=7)
+    ax.text(x_conc_int + 30.0, y_stone1 - 8.0, "Colin Catlin, 2026", ha="center", va="top", fontsize=7)
 
     ax.set_xlim(x_conc_int - 14.0, x_clad1 + 38.0)
-    ax.set_ylim(y_stone_bot - 6.0, y_wall_top + 12.0)
+    ax.set_ylim(y_stone1 - 6.0, y_wall_top + 12.0)
     ax.set_aspect("equal")
     ax.axis("off")
 
@@ -433,7 +425,7 @@ def main():
         "",
         "• Sill: include sill gasket and treated mudsill. Prioritize air sealing at sill plate (sealant + spray foam at gaps). Use mudsill anchors (e.g., MASAP) as required (not shown).",
         "",
-        "• Flashings: provide stainless (preferred) or thick aluminum Z-flashing with drip edge at bottom of rainscreen furring; install insect barrier mesh/strip (Cor-A-Vent or SS screen) just above flashing.",
+        "• Flashings: provide stainless (preferred) or thick aluminum Z-flashing with drip edge at bottom of rainscreen furring. Install insect barrier mesh/strip (Cor-A-Vent or SS screen) just above flashing. Mesh can be stapled to furring strips, run behind the flashing, and into the layer between basement and wall foam.",
         "",
         "• Interface flashing: provide L-flashing from bottom of sheathing down onto the top of basement foam. Terminate within the insulation plane and seal the outer end with spray foam (Pestblock) to avoid an exterior thermal bridge. This is meant as a foam layer insect barrier.",
         "",

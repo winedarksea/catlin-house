@@ -333,7 +333,7 @@ def _french_drain(ax, x, y, diameter, *, fc=COLORS.metal, ec="black", lw=1.1, z=
     ax.add_patch(Circle((x, y), radius=diameter / 2 - 0.25, facecolor=fc, edgecolor="none", alpha=fill_alpha, zorder=z + 1))
 
 
-def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, poly_thk=0.05, stone_thk=4.0, 
+def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, vapor_thk=0.05, stone_thk=4.0, 
                    thermal_break_thk=1.0, sealant_thk=0.5, thermal_break_side='left',
                    thermal_break_x=None, show_stone=True):
     """
@@ -351,8 +351,8 @@ def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, poly_thk=0.0
         Thickness of concrete slab (default 4.0")
     xps_thk : float
         Thickness of XPS insulation under slab (default 2.0")
-    poly_thk : float
-        Thickness of poly vapor barrier (schematic, default 0.05")
+    vapor_thk : float
+        Thickness of vapor barrier (schematic, default 0.05")
     stone_thk : float
         Thickness of gravel base (default 4.0")
     thermal_break_thk : float
@@ -368,13 +368,13 @@ def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, poly_thk=0.0
     
     Returns:
     --------
-    dict with layer y-coordinates: 'slab_bot', 'poly_bot', 'xps_bot', 'stone_bot'
+    dict with layer y-coordinates: 'slab_bot', 'vapor_bot', 'xps_bot', 'stone_bot'
     """
     COL = COLORS
     
     y_slab_bot = y_top - slab_thk
-    y_poly_bot = y_slab_bot - poly_thk
-    y_xps_bot = y_poly_bot - xps_thk
+    y_vapor_bot = y_slab_bot - vapor_thk
+    y_xps_bot = y_vapor_bot - xps_thk
     y_stone_bot = y_xps_bot - stone_thk
     
     # Draw thermal break(s) if specified
@@ -397,7 +397,7 @@ def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, poly_thk=0.0
     
     # Draw slab layers
     _rect(ax, x0, y_slab_bot, x1 - x0, slab_thk, fc=COL.concrete, lw=1.2, z=2)
-    _rect(ax, x0, y_poly_bot, x1 - x0, poly_thk, fc=COL.membrane, ec="black", lw=0.6, z=1)
+    _rect(ax, x0, y_vapor_bot, x1 - x0, vapor_thk, fc=COL.membrane, ec="black", lw=0.6, z=1)
     _rect(ax, x0, y_xps_bot, x1 - x0, xps_thk, fc=COL.xps, lw=1.0, z=1)
     
     if show_stone:
@@ -405,7 +405,7 @@ def _slab_assembly(ax, x0, x1, y_top, *, slab_thk=4.0, xps_thk=2.0, poly_thk=0.0
     
     return {
         'slab_bot': y_slab_bot,
-        'poly_bot': y_poly_bot,
+        'vapor_bot': y_vapor_bot,
         'xps_bot': y_xps_bot,
         'stone_bot': y_stone_bot
     }

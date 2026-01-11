@@ -28,7 +28,7 @@ The basement is poured concrete, 12" thick walls (might be changed to 10" later)
 Basement floor is 3.5" thick concrete over 6 mil or greater poly vapor barrier, over 4" of rigid XPS foam, over 6" of aggregate.
 Basement floor has one recessed area for a curbless shower.
 Beneath basement are footing drains for drainage and radon that drain to a sump pump outside the basement.
-Basement is subdivided into a grid of four smaller squares, with a cross of middle, load bearing concrete walls at 18' oc on each axis.
+Basement is subdivided into a grid of four smaller squares, with a cross of middle, load bearing concrete walls at 18' oc on each axis. 
 
 The main structure of the upper floors is two loading bearing outer walls with a center midline load bearing wall. Joists (11 7/8" thickness) of about 18' span between the load bearing exterior side walls and the center midline wall (joists run east to west). These load bearing walls run north to south. The east to west running exterior walls bear only the load of the end floor joist and bear only a small fraction of house load compared to the north to south running walls.
 

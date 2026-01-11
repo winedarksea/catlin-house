@@ -56,7 +56,7 @@ class CatlinHouseSpec:
     attic_ridge_height_above_floor_ft: float = 11.0
 
     roof_pitch_rise_over_run: float = 4.0 / 12.0
-    roof_overhang_in: float = 16.0
+    roof_overhang_in: float = 0.0
 
     framing_spacing_in: float = 16.0
     floor_joist_width_in: float = 1.5

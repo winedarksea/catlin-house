@@ -76,6 +76,10 @@ class CatlinHouseSpec:
     stair_opening_size_ft: tuple[float, float] = (7.0, 9.0 + 8.0 / 12.0)  # (E-W, N-S)
 
 
+def _flip_profile_y(profile_points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    return [tuple((p[0], -p[1])) for p in profile_points]
+
+
 def _rect_polyline_xy(origin_xy: tuple[float, float], size_xy: tuple[float, float]) -> list[tuple[float, float]]:
     x0, y0 = origin_xy
     w, h = size_xy
@@ -107,7 +111,8 @@ def _layer_poly(mid0, mid1, center_offset, thickness, x0, x1):
     p1u = _pt_at_x(upper0, upper1, x1)
     p1l = _pt_at_x(lower0, lower1, x1)
     p0l = _pt_at_x(lower0, lower1, x0)
-    return [tuple(p) for p in [p0u, p1u, p1l, p0l]]
+    poly_points = [p0u, p1u, p1l, p0l]
+    return _flip_profile_y(poly_points)
 
 
 
@@ -464,17 +469,17 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     gable_profile_south = [
         (0.0, 0.0),  # bottom-left
         (house_size_m, 0.0),  # bottom-right
-        (house_size_m, knee_wall_h_m),  # top-right at knee wall
-        (house_size_m / 2.0, ridge_h_m),  # peak at center
-        (0.0, knee_wall_h_m),  # top-left at knee wall
+        (house_size_m, -knee_wall_h_m),  # top-right at knee wall (inverted)
+        (house_size_m / 2.0, -ridge_h_m),  # peak at center (inverted)
+        (0.0, -knee_wall_h_m),  # top-left at knee wall (inverted)
     ]
 
     # South gable wall matrix: profile in XY plane, extrude in +Z direction (local)
     # We need: local X → world X, local Y → world Z (up), local Z → world Y (into house)
     south_gable_matrix = placement_matrix(
-        origin=(0.0, wall_upper_thk_m, 0.0),
+        origin=(0.0, 0.0, 0.0),
         x_axis=(1.0, 0.0, 0.0),  # local X -> world +X (along wall)
-        y_axis=(0.0, 0.0, 1.0),  # local Y -> world +Z (up)
+        z_axis=(0.0, 1.0, 0.0),  # local Z (extrusion) -> world +Y (into house)
     )
 
     south_gable_wall = add_prism_from_profile(
@@ -491,9 +496,9 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     # North gable wall matrix: profile in XY plane, extrude in local +Z direction
     # We need: local X → world -X (mirror), local Y → world +Z (up), local Z → world -Y (into house)
     north_gable_matrix = placement_matrix(
-        origin=(house_size_m, house_size_m - wall_upper_thk_m, 0.0),
+        origin=(house_size_m, house_size_m, 0.0),
         x_axis=(-1.0, 0.0, 0.0),  # local X -> world -X (mirrored along wall)
-        y_axis=(0.0, 0.0, 1.0),  # local Y -> world +Z (up)
+        z_axis=(0.0, -1.0, 0.0),  # local Z (extrusion) -> world -Y (into house)
     )
 
     north_gable_wall = add_prism_from_profile(
@@ -582,8 +587,11 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     cladding_thk_m = inch(0.5)
     offset = wall_upper_thk_m / 2.0
 
-    cladding_south_gable_matrix = south_gable_matrix.copy()
-    cladding_south_gable_matrix[0:3, 3] += offset * south_gable_matrix[0:3, 2]
+    cladding_south_gable_matrix = placement_matrix(
+        origin=(0.0, 0.0, 0.0),
+        x_axis=(1.0, 0.0, 0.0),
+        z_axis=(0.0, -1.0, 0.0),
+    )
     south_gable_cladding = add_prism_from_profile(
         f,
         context=contexts.body,
@@ -596,8 +604,11 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     )
     assign_surface_style(f, element=south_gable_cladding, style=standing_seam_style)
 
-    cladding_north_gable_matrix = north_gable_matrix.copy()
-    cladding_north_gable_matrix[0:3, 3] += offset * north_gable_matrix[0:3, 2]
+    cladding_north_gable_matrix = placement_matrix(
+        origin=(house_size_m, house_size_m, 0.0),
+        x_axis=(-1.0, 0.0, 0.0),
+        z_axis=(0.0, 1.0, 0.0),
+    )
     north_gable_cladding = add_prism_from_profile(
         f,
         context=contexts.body,
@@ -790,9 +801,9 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
 
     # Matrix to place the roof layers
     roof_matrix = placement_matrix(
-        origin=(0.0, house_size_m + overhang_m, 0.0),
-        x_axis=(1.0, 0.0, 0.0),
-        y_axis=(0.0, 0.0, 1.0),
+        origin=(0.0, -overhang_m, 0.0),
+        x_axis=(1.0, 0.0, 0.0),  # local X -> world X
+        z_axis=(0.0, 1.0, 0.0),  # local Z (extrusion) -> world Y
     )
 
     house_roof_elements = []

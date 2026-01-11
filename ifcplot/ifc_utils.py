@@ -129,9 +129,10 @@ def set_pset_json(f: "ifcopenshell.file", *, product: Any, pset_name: str, prop_
     return pset
 
 
-def add_trade_groups(f: "ifcopenshell.file") -> dict[str, Any]:
+def add_trade_groups(f: "ifcopenshell.file", *, trade_names: Optional[list[str]] = None) -> dict[str, Any]:
     groups: dict[str, Any] = {}
-    for name in ("Concrete", "Framing", "HVAC", "Plumbing", "Drywall", "Cladding", "Furnishings"):
+    names = trade_names if trade_names is not None else ("Concrete", "Framing", "HVAC", "Plumbing", "Drywall", "Cladding", "Furnishings")
+    for name in names:
         groups[name] = ifcopenshell.api.run("group.add_group", f, name=name)
     return groups
 
@@ -153,21 +154,42 @@ def add_wall_between_points(
     elevation: float,
     height: float,
     thickness: float,
+    direction_sense: str = "POSITIVE",
+    offset: float = 0.0,
+    x_angle: float = 0.0,
     wall_type: Optional[Any] = None,
 ) -> Any:
     wall = ifcopenshell.api.run("root.create_entity", f, ifc_class="IfcWall", name=name)
     ifcopenshell.api.run("spatial.assign_container", f, products=[wall], relating_structure=storey)
-    representation = ifcopenshell.api.geometry.create_2pt_wall(
+    p1_ = np.array(p1, dtype=float)
+    p2_ = np.array(p2, dtype=float)
+    v = p2_ - p1_
+    length = float(np.linalg.norm(v))
+    if length < 1e-12:
+        raise ValueError(f"Wall `{name}` has zero length")
+    v /= length
+
+    representation = ifcopenshell.api.geometry.add_wall_representation(
         f,
-        element=wall,
         context=context,
-        p1=p1,
-        p2=p2,
-        elevation=float(elevation),
+        length=length,
         height=float(height),
         thickness=float(thickness),
-        is_si=True,
+        direction_sense=direction_sense,
+        offset=float(offset),
+        x_angle=float(x_angle),
     )
+
+    matrix = np.array(
+        [
+            [v[0], -v[1], 0.0, p1_[0]],
+            [v[1], v[0], 0.0, p1_[1]],
+            [0.0, 0.0, 1.0, float(elevation)],
+            [0.0, 0.0, 0.0, 1.0],
+        ],
+        dtype=float,
+    )
+    ifcopenshell.api.run("geometry.edit_object_placement", f, product=wall, matrix=matrix)
     ifcopenshell.api.run("geometry.assign_representation", f, product=wall, representation=representation)
     if wall_type is not None:
         ifcopenshell.api.run("type.assign_type", f, related_objects=[wall], relating_type=wall_type)
@@ -351,6 +373,41 @@ def create_surface_style_with_texture(
                 )
             ]
         },
+    )
+    return style
+
+
+def create_surface_style_shading(
+    f: "ifcopenshell.file",
+    *,
+    name: str,
+    rgb: tuple[float, float, float],
+    transparency: float | None = None,
+) -> Any:
+    """Creates a simple surface style with an RGB color (and optional transparency)."""
+    r, g, b = (float(c) for c in rgb)
+    style = ifcopenshell.api.run("style.add_style", f, name=name)
+    colour = {"Name": None, "Red": r, "Green": g, "Blue": b}
+    if transparency is None:
+        ifcopenshell.api.run(
+            "style.add_surface_style",
+            f,
+            style=style,
+            ifc_class="IfcSurfaceStyleShading",
+            attributes={"SurfaceColour": colour},
+        )
+        return style
+    attrs: dict[str, Any] = {
+        "SurfaceColour": colour,
+        "Transparency": float(transparency),
+        "ReflectanceMethod": "NOTDEFINED",
+    }
+    ifcopenshell.api.run(
+        "style.add_surface_style",
+        f,
+        style=style,
+        ifc_class="IfcSurfaceStyleRendering",
+        attributes=attrs,
     )
     return style
 

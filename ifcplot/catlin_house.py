@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ from ifcplot.ifc_utils import (
     add_wall_between_points,
     assign_surface_style,
     assign_to_group,
+    create_surface_style_shading,
     create_surface_style_with_texture,
     init_ifc_project,
     set_pset_json,
@@ -125,11 +127,20 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     groups = add_trade_groups(f)
 
     # ---- Materials and Styles --------------------------------------------------
+    # Copy the standing-seam texture next to the exported IFC so viewers (e.g. Bonsai) can resolve it.
+    texture_src = Path(__file__).parent / "textures" / "standing_seam_texture.png"
+    texture_rel = Path("textures") / texture_src.name
+    texture_dst = out_path.parent / texture_rel
+    texture_dst.parent.mkdir(parents=True, exist_ok=True)
+    if texture_src.exists():
+        shutil.copy2(texture_src, texture_dst)
+
     standing_seam_style = create_surface_style_with_texture(
         f,
         name="Standing Seam Metal",
-        texture_path="ifcplot/textures/standing_seam_texture.png",
+        texture_path=texture_rel.as_posix(),
     )
+    framing_wood_style = create_surface_style_shading(f, name="Framing Wood", rgb=(0.72, 0.56, 0.38))
 
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
@@ -421,207 +432,241 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     assign_to_group(f, group=groups["Drywall"], products=[attic_floor_drywall])
     assign_to_group(f, group=groups["Framing"], products=[attic_floor_subfloor])
 
-    # House above-grade shell walls: simple sheathing-envelope walls.
-    wall_main_thk_m = inch(5.5 + 0.625)  # 2x6 + 5/8" sheathing
-    wall_upper_thk_m = inch(3.5 + 0.625)  # 2x4 + 5/8" sheathing
+    # ---- Exterior Wall Layers (siding stack) ----------------------------------
+    # Mirror the wall-side layers used in `catlin_house/roof_wall_eave_detail_ifc.py`.
+    wall_sheathing_m = inch(0.625)
+    wall_polyiso_m = inch(2.0)
+    wall_eps_m = inch(2.0)
+    wall_furring_m = inch(0.5)
+    wall_metal_m = inch(0.5)
 
-    def add_house_storey_shell(storey: Any, *, elev_m: float, height_m: float, thickness_m: float, label: str) -> list[Any]:
-        segments = [
-            ((hx(0.0), hy(0.0)), (hx(house_size_m), hy(0.0))),
-            ((hx(house_size_m), hy(0.0)), (hx(house_size_m), hy(house_size_m))),
-            ((hx(house_size_m), hy(house_size_m)), (hx(0.0), hy(house_size_m))),
-            ((hx(0.0), hy(house_size_m)), (hx(0.0), hy(0.0))),
-        ]
-        return [
-            add_wall_between_points(
+    def add_layered_wall_segments(
+        *,
+        storey: Any,
+        elevation_m: float,
+        height_m: float,
+        stud_depth_m: float,
+        segments: list[tuple[tuple[float, float], tuple[float, float]]],
+        label: str,
+    ) -> dict[str, list[Any]]:
+        created: dict[str, list[Any]] = {"studs": [], "sheathing": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
+        for i, (p1, p2) in enumerate(segments, start=1):
+            sheathing = add_wall_between_points(
                 f,
                 context=contexts.body,
                 storey=storey,
-                name=f"House {label} Exterior Wall {i+1}",
+                name=f"House {label} Exterior Sheathing {i}",
                 p1=p1,
                 p2=p2,
-                elevation=elev_m,
+                elevation=elevation_m,
                 height=height_m,
-                thickness=thickness_m,
+                thickness=wall_sheathing_m,
+                direction_sense="POSITIVE",  # into house
+                offset=0.0,  # starts at outer face
             )
-            for i, (p1, p2) in enumerate(segments)
-        ]
+            studs = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"House {label} Stud Wall {i}",
+                p1=p1,
+                p2=p2,
+                elevation=elevation_m,
+                height=height_m,
+                thickness=stud_depth_m,
+                direction_sense="POSITIVE",  # into house
+                offset=wall_sheathing_m,  # behind sheathing
+            )
+            assign_surface_style(f, element=studs, style=framing_wood_style)
 
-    main_shell_walls = add_house_storey_shell(
-        house_main, elev_m=main_elev_m, height_m=ft(spec.main_storey_height_ft), thickness_m=wall_main_thk_m, label="Main"
+            created["sheathing"].append(sheathing)
+            created["studs"].append(studs)
+
+            # Outside of sheathing: polyiso + eps + furring + standing seam (stacked outward).
+            outward_offset = 0.0
+
+            polyiso = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"House {label} Exterior Polyiso {i}",
+                p1=p1,
+                p2=p2,
+                elevation=elevation_m,
+                height=height_m,
+                thickness=wall_polyiso_m,
+                direction_sense="NEGATIVE",  # outward
+                offset=-outward_offset,
+            )
+            outward_offset += wall_polyiso_m
+
+            eps = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"House {label} Exterior EPS {i}",
+                p1=p1,
+                p2=p2,
+                elevation=elevation_m,
+                height=height_m,
+                thickness=wall_eps_m,
+                direction_sense="NEGATIVE",  # outward
+                offset=-outward_offset,
+            )
+            outward_offset += wall_eps_m
+
+            furring = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"House {label} Exterior Furring {i}",
+                p1=p1,
+                p2=p2,
+                elevation=elevation_m,
+                height=height_m,
+                thickness=wall_furring_m,
+                direction_sense="NEGATIVE",  # outward
+                offset=-outward_offset,
+            )
+            outward_offset += wall_furring_m
+
+            metal = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"House {label} Exterior Standing Seam {i}",
+                p1=p1,
+                p2=p2,
+                elevation=elevation_m,
+                height=height_m,
+                thickness=wall_metal_m,
+                direction_sense="NEGATIVE",  # outward
+                offset=-outward_offset,
+            )
+            assign_surface_style(f, element=metal, style=standing_seam_style)
+
+            created["polyiso"].append(polyiso)
+            created["eps"].append(eps)
+            created["furring"].append(furring)
+            created["metal"].append(metal)
+
+        assign_to_group(f, group=groups["Framing"], products=[*created["studs"], *created["sheathing"]])
+        assign_to_group(f, group=groups["Cladding"], products=[*created["polyiso"], *created["eps"], *created["furring"], *created["metal"]])
+        return created
+
+    perimeter_segments = [
+        ((hx(0.0), hy(0.0)), (hx(house_size_m), hy(0.0))),  # south (eastward)
+        ((hx(house_size_m), hy(0.0)), (hx(house_size_m), hy(house_size_m))),  # east (northward)
+        ((hx(house_size_m), hy(house_size_m)), (hx(0.0), hy(house_size_m))),  # north (westward)
+        ((hx(0.0), hy(house_size_m)), (hx(0.0), hy(0.0))),  # west (southward)
+    ]
+
+    add_layered_wall_segments(
+        storey=house_main,
+        elevation_m=main_elev_m,
+        height_m=ft(spec.main_storey_height_ft),
+        stud_depth_m=inch(5.5),
+        segments=perimeter_segments,
+        label="Main",
     )
-    second_shell_walls = add_house_storey_shell(
-        house_second,
-        elev_m=second_elev_m,
+    add_layered_wall_segments(
+        storey=house_second,
+        elevation_m=second_elev_m,
         height_m=ft(spec.second_storey_height_ft),
-        thickness_m=wall_upper_thk_m,
+        stud_depth_m=inch(3.5),
+        segments=perimeter_segments,
         label="Second",
     )
-    # Attic walls: east/west knee walls at 5', north/south gable ends with triangular top.
-    # Gable ends: rectangular base (5' high) + triangular peak (6' additional at center)
+
+    # Attic knee walls (east/west only).
+    add_layered_wall_segments(
+        storey=house_attic,
+        elevation_m=attic_elev_m,
+        height_m=ft(spec.attic_knee_wall_height_ft),
+        stud_depth_m=inch(3.5),
+        segments=[
+            ((hx(house_size_m), hy(0.0)), (hx(house_size_m), hy(house_size_m))),  # east
+            ((hx(0.0), hy(house_size_m)), (hx(0.0), hy(0.0))),  # west
+        ],
+        label="Attic Knee",
+    )
+
+    # Attic gable ends: build the same layer stack as prisms so siding continues to the ridge.
     knee_wall_h_m = ft(spec.attic_knee_wall_height_ft)
     ridge_h_m = ft(spec.attic_ridge_height_above_floor_ft)
-    gable_triangle_h_m = ridge_h_m - knee_wall_h_m  # Height of the triangular portion
-
-    # South gable wall: base rectangle (5' high) + triangular peak
-    # Profile for gable: rectangle with triangle on top
-    # Points: bottom-left, bottom-right, top-right (at knee height), peak (center at ridge), top-left (at knee height)
-    gable_profile_south = [
-        (0.0, 0.0),  # bottom-left
-        (house_size_m, 0.0),  # bottom-right
-        (house_size_m, -knee_wall_h_m),  # top-right at knee wall (inverted)
-        (house_size_m / 2.0, -ridge_h_m),  # peak at center (inverted)
-        (0.0, -knee_wall_h_m),  # top-left at knee wall (inverted)
+    gable_profile = [
+        (0.0, 0.0),
+        (house_size_m, 0.0),
+        (house_size_m, -knee_wall_h_m),
+        (house_size_m / 2.0, -ridge_h_m),
+        (0.0, -knee_wall_h_m),
     ]
 
-    # South gable wall matrix: profile in XY plane, extrude in +Z direction (local)
-    # We need: local X → world X, local Y → world Z (up), local Z → world Y (into house)
-    south_gable_matrix = placement_matrix(
-        origin=(0.0, 0.0, 0.0),
-        x_axis=(1.0, 0.0, 0.0),  # local X -> world +X (along wall)
-        z_axis=(0.0, 1.0, 0.0),  # local Z (extrusion) -> world +Y (into house)
-    )
+    def shifted_along_thickness(base_matrix: np.ndarray, dist_m: float) -> np.ndarray:
+        m = base_matrix.copy()
+        m[0:3, 3] = m[0:3, 3] + float(dist_m) * m[0:3, 2]
+        return m
 
-    south_gable_wall = add_prism_from_profile(
-        f,
-        context=contexts.body,
-        storey=house_attic,
-        ifc_class="IfcWall",
-        name="House Attic Exterior Wall South (gable)",
-        profile_points=gable_profile_south,
-        depth=wall_upper_thk_m,
-        placement_matrix=south_gable_matrix,
-    )
-
-    # North gable wall matrix: profile in XY plane, extrude in local +Z direction
-    # We need: local X → world -X (mirror), local Y → world +Z (up), local Z → world -Y (into house)
-    north_gable_matrix = placement_matrix(
-        origin=(house_size_m, house_size_m, 0.0),
-        x_axis=(-1.0, 0.0, 0.0),  # local X -> world -X (mirrored along wall)
-        z_axis=(0.0, -1.0, 0.0),  # local Z (extrusion) -> world -Y (into house)
-    )
-
-    north_gable_wall = add_prism_from_profile(
-        f,
-        context=contexts.body,
-        storey=house_attic,
-        ifc_class="IfcWall",
-        name="House Attic Exterior Wall North (gable)",
-        profile_points=gable_profile_south,  # Same profile, different orientation
-        depth=wall_upper_thk_m,
-        placement_matrix=north_gable_matrix,
-    )
-
-    attic_shell_walls = [
-        south_gable_wall,
-        # East wall (knee wall)
-        add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=house_attic,
-            name="House Attic Exterior Wall East (knee)",
-            p1=(hx(house_size_m), hy(0.0)),
-            p2=(hx(house_size_m), hy(house_size_m)),
-            elevation=attic_elev_m,
-            height=ft(spec.attic_knee_wall_height_ft),
-            thickness=wall_upper_thk_m,
-        ),
-        north_gable_wall,
-        # West wall (knee wall)
-        add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=house_attic,
-            name="House Attic Exterior Wall West (knee)",
-            p1=(hx(0.0), hy(house_size_m)),
-            p2=(hx(0.0), hy(0.0)),
-            elevation=attic_elev_m,
-            height=ft(spec.attic_knee_wall_height_ft),
-            thickness=wall_upper_thk_m,
-        ),
-    ]
-    assign_to_group(f, group=groups["Framing"], products=[*main_shell_walls, *second_shell_walls, *attic_shell_walls])
-
-    # House Cladding
-    cladding_thk_m = inch(0.5)
-
-    def add_house_storey_cladding(storey: Any, *, elev_m: float, height_m: float, thickness_m: float, label: str) -> list[Any]:
-        offset = thickness_m / 2.0
-        segments = [
-            ((hx(-offset), hy(-offset)), (hx(house_size_m + offset), hy(-offset))),
-            ((hx(house_size_m + offset), hy(-offset)), (hx(house_size_m + offset), hy(house_size_m + offset))),
-            ((hx(house_size_m + offset), hy(house_size_m + offset)), (hx(-offset), hy(house_size_m + offset))),
-            ((hx(-offset), hy(house_size_m + offset)), (hx(-offset), hy(-offset))),
+    def add_gable_layer_stack(*, base_matrix: np.ndarray, label: str) -> None:
+        # Outside of sheathing (negative dist) → sheathing (0) → studs (positive dist).
+        outward_layers = [
+            ("Exterior Polyiso", wall_polyiso_m),
+            ("Exterior EPS", wall_eps_m),
+            ("Exterior Furring", wall_furring_m),
+            ("Exterior Standing Seam", wall_metal_m),
         ]
-        walls = [
-            add_wall_between_points(
+        outward_cum = 0.0
+        for name, thk in outward_layers:
+            outward_cum += float(thk)
+            el = add_prism_from_profile(
                 f,
                 context=contexts.body,
-                storey=storey,
-                name=f"House {label} Exterior Cladding {i+1}",
-                p1=p1,
-                p2=p2,
-                elevation=elev_m,
-                height=height_m,
-                thickness=cladding_thk_m,
+                storey=house_attic,
+                ifc_class="IfcWall",
+                name=f"House Attic {label} {name}",
+                profile_points=gable_profile,
+                depth=float(thk),
+                placement_matrix=shifted_along_thickness(base_matrix, -outward_cum),
             )
-            for i, (p1, p2) in enumerate(segments)
-        ]
-        for wall in walls:
-            assign_surface_style(f, element=wall, style=standing_seam_style)
-        return walls
+            if "Standing Seam" in name:
+                assign_surface_style(f, element=el, style=standing_seam_style)
+            assign_to_group(f, group=groups["Cladding"], products=[el])
 
-    main_cladding_walls = add_house_storey_cladding(
-        house_main, elev_m=main_elev_m, height_m=ft(spec.main_storey_height_ft), thickness_m=wall_main_thk_m, label="Main"
-    )
-    second_cladding_walls = add_house_storey_cladding(
-        house_second,
-        elev_m=second_elev_m,
-        height_m=ft(spec.second_storey_height_ft),
-        thickness_m=wall_upper_thk_m,
-        label="Second",
-    )
-    assign_to_group(f, group=groups["Cladding"], products=[*main_cladding_walls, *second_cladding_walls])
+        sheathing = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            ifc_class="IfcWall",
+            name=f"House Attic {label} Exterior Sheathing",
+            profile_points=gable_profile,
+            depth=float(wall_sheathing_m),
+            placement_matrix=base_matrix,
+        )
+        studs = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            ifc_class="IfcWall",
+            name=f"House Attic {label} Stud Wall",
+            profile_points=gable_profile,
+            depth=float(inch(3.5)),
+            placement_matrix=shifted_along_thickness(base_matrix, float(wall_sheathing_m)),
+        )
+        assign_surface_style(f, element=studs, style=framing_wood_style)
+        assign_to_group(f, group=groups["Framing"], products=[sheathing, studs])
 
-    # Cladding for attic gable walls
-    cladding_thk_m = inch(0.5)
-    offset = wall_upper_thk_m / 2.0
-
-    cladding_south_gable_matrix = placement_matrix(
+    south_gable_matrix = placement_matrix(
         origin=(0.0, 0.0, 0.0),
         x_axis=(1.0, 0.0, 0.0),
-        z_axis=(0.0, -1.0, 0.0),
+        z_axis=(0.0, 1.0, 0.0),  # into house (+Y)
     )
-    south_gable_cladding = add_prism_from_profile(
-        f,
-        context=contexts.body,
-        storey=house_attic,
-        ifc_class="IfcWall",
-        name="House Attic Exterior Cladding South (gable)",
-        profile_points=gable_profile_south,
-        depth=cladding_thk_m,
-        placement_matrix=cladding_south_gable_matrix,
-    )
-    assign_surface_style(f, element=south_gable_cladding, style=standing_seam_style)
-
-    cladding_north_gable_matrix = placement_matrix(
+    north_gable_matrix = placement_matrix(
         origin=(house_size_m, house_size_m, 0.0),
         x_axis=(-1.0, 0.0, 0.0),
-        z_axis=(0.0, 1.0, 0.0),
+        z_axis=(0.0, -1.0, 0.0),  # into house (-Y)
     )
-    north_gable_cladding = add_prism_from_profile(
-        f,
-        context=contexts.body,
-        storey=house_attic,
-        ifc_class="IfcWall",
-        name="House Attic Exterior Cladding North (gable)",
-        profile_points=gable_profile_south,  # Same profile, different orientation
-        depth=cladding_thk_m,
-        placement_matrix=cladding_north_gable_matrix,
-    )
-    assign_surface_style(f, element=north_gable_cladding, style=standing_seam_style)
-
-    assign_to_group(f, group=groups["Cladding"], products=[south_gable_cladding, north_gable_cladding])
+    add_gable_layer_stack(base_matrix=south_gable_matrix, label="Gable South")
+    add_gable_layer_stack(base_matrix=north_gable_matrix, label="Gable North")
 
     # House centerline load-bearing wall (runs N-S at x=18') for upper levels.
     center_wall_thk_m = inch(spec.centerline_wall_thickness_in)
@@ -743,6 +788,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         )
 
     assign_to_group(f, group=groups["Framing"], products=[*second_floor_joists, *attic_floor_joists])
+    for joist in [*second_floor_joists, *attic_floor_joists]:
+        assign_surface_style(f, element=joist, style=framing_wood_style)
 
     # Optional grouping to keep joists tidy in viewers.
     second_floor_group = ifcopenshell.api.run("group.add_group", f, name="House Second Floor Joists")
@@ -912,6 +959,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
             )
         )
     assign_to_group(f, group=groups["Framing"], products=roof_joists)
+    for joist in roof_joists:
+        assign_surface_style(f, element=joist, style=framing_wood_style)
     roof_joist_group = ifcopenshell.api.run("group.add_group", f, name="House Roof Joists")
     assign_to_group(f, group=roof_joist_group, products=roof_joists)
 

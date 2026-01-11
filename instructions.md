@@ -24,7 +24,7 @@ Four structures
 
 The house:
 36' by 36' measured at the sheathing, designed so 8' by 4' plywood sheathing can be used without cuts.
-It consists of 4 levels called the basement, the main floor (also called first floor), the second floor, and the attic level floor.
+It consists of 4 levels called the basement, the main floor (also called first floor), the second floor, and the attic level floor (also called the third floor).
 The basement is poured concrete, 12" thick walls (might be changed to 10" later) with 9' height (clear height above slab and below floor) with 9" thick concrete slab for the ceiling.
 Basement floor is 3.5" thick concrete over 6 mil or greater poly vapor barrier, over 4" of rigid XPS foam, over 6" of aggregate.
 Basement floor has one recessed area for a curbless shower.

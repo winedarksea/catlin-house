@@ -10,6 +10,8 @@ import numpy.typing as npt
 try:
     import ifcopenshell
     import ifcopenshell.api
+    import ifcopenshell.util.placement
+    import ifcopenshell.util.unit
 except ModuleNotFoundError as exc:  # pragma: no cover
     raise ModuleNotFoundError(
         "ifcplot requires `ifcopenshell`. Install with `python -m pip install ifcopenshell`."
@@ -215,6 +217,7 @@ def add_prism_from_profile(
     profile_points: list[tuple[float, float]],
     depth: float,
     placement_matrix: np.ndarray,
+    placement_is_storey_relative: bool = True,
     element_type: Optional[Any] = None,
     predefined_type: Optional[str] = None,
 ) -> Any:
@@ -231,8 +234,7 @@ def add_prism_from_profile(
     if pts[0] != pts[-1]:
         pts = [*pts, pts[0]]
 
-    curve = f.createIfcIndexedPolyCurve(f.createIfcCartesianPointList2D(pts))
-    profile = f.createIfcArbitraryClosedProfileDef("AREA", None, curve)
+    profile = ifcopenshell.api.run("profile.add_arbitrary_profile", f, name=name, profile=pts)
 
     representation = ifcopenshell.api.run(
         "geometry.add_profile_representation",
@@ -242,7 +244,15 @@ def add_prism_from_profile(
         depth=float(depth),
     )
     ifcopenshell.api.run("geometry.assign_representation", f, product=element, representation=representation)
-    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=placement_matrix)
+    matrix = placement_matrix
+    if placement_is_storey_relative and getattr(storey, "ObjectPlacement", None):
+        # `get_local_placement` returns project units (often mm), whereas our helpers
+        # construct matrices in SI meters. Convert the storey translation into SI.
+        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
+        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
+        storey_matrix[0:3, 3] *= float(unit_scale)
+        matrix = storey_matrix @ placement_matrix
+    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=matrix)
     if element_type is not None:
         ifcopenshell.api.run("type.assign_type", f, related_objects=[element], relating_type=element_type)
     return element
@@ -261,6 +271,7 @@ def add_rect_member_between_points(
     predefined_type: str = "JOIST",
     member_type: Optional[Any] = None,
     x_axis_hint: tuple[float, float, float] = (0.0, 1.0, 0.0),
+    points_are_storey_relative: bool = True,
     ifc_class: str = "IfcBeam",
 ) -> Any:
     """
@@ -272,6 +283,12 @@ def add_rect_member_between_points(
     """
     p1v = np.array(p1, dtype=float)
     p2v = np.array(p2, dtype=float)
+    if points_are_storey_relative and getattr(storey, "ObjectPlacement", None):
+        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
+        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
+        storey_matrix[0:3, 3] *= float(unit_scale)
+        p1v = (storey_matrix @ np.array([*p1v, 1.0], dtype=float))[0:3]
+        p2v = (storey_matrix @ np.array([*p2v, 1.0], dtype=float))[0:3]
     axis = p2v - p1v
     length = float(np.linalg.norm(axis))
     if length < 1e-9:
@@ -307,3 +324,43 @@ def add_rect_member_between_points(
     if member_type is not None:
         ifcopenshell.api.run("type.assign_type", f, related_objects=[member], relating_type=member_type)
     return member
+
+
+def create_surface_style_with_texture(
+    f: "ifcopenshell.file",
+    *,
+    name: str,
+    texture_path: str,
+    repeat_s: bool = True,
+    repeat_t: bool = True,
+) -> Any:
+    """Creates an IfcSurfaceStyleWithTextures."""
+    style = ifcopenshell.api.run("style.add_style", f, name=name)
+    ifcopenshell.api.run(
+        "style.add_surface_style",
+        f,
+        style=style,
+        ifc_class="IfcSurfaceStyleWithTextures",
+        attributes={
+            "Textures": [
+                f.create_entity(
+                    "IfcImageTexture",
+                    URLReference=texture_path,
+                    RepeatS=repeat_s,
+                    RepeatT=repeat_t,
+                )
+            ]
+        },
+    )
+    return style
+
+
+def assign_surface_style(f: "ifcopenshell.file", *, element: Any, style: Any) -> None:
+    """Assigns a surface style to an element's representation."""
+    if not hasattr(element, "Representation") or not element.Representation:
+        return
+    if not hasattr(element.Representation, "Representations") or not element.Representation.Representations:
+        return
+    for rep in element.Representation.Representations:
+        for item in rep.Items:
+            ifcopenshell.api.run("style.assign_item_style", f, item=item, style=style)

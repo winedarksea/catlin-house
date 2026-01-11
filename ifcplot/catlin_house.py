@@ -20,10 +20,13 @@ from ifcplot.ifc_utils import (
     add_storey,
     add_trade_groups,
     add_wall_between_points,
+    assign_surface_style,
     assign_to_group,
+    create_surface_style_with_texture,
     init_ifc_project,
     set_pset_json,
     translation_matrix,
+    placement_matrix,
 )
 from ifcplot.units import ft, inch
 
@@ -79,12 +82,49 @@ def _rect_polyline_xy(origin_xy: tuple[float, float], size_xy: tuple[float, floa
     return [(x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h), (x0, y0)]
 
 
+def _offset_segment(p0, p1, offset):
+    p0 = np.array(p0, dtype=float)
+    p1 = np.array(p1, dtype=float)
+    v = p1 - p0
+    if np.linalg.norm(v) == 0:
+        return p0, p1
+    v_perp = np.array([-v[1], v[0]])
+    v_perp /= np.linalg.norm(v_perp)
+    return p0 + offset * v_perp, p1 + offset * v_perp
+
+
+def _pt_at_x(seg0, seg1, x):
+    """Helper to find point along a segment at a given x coordinate."""
+    t = (x - seg0[0]) / (seg1[0] - seg0[0] + 1e-9)
+    return seg0 + t * (seg1 - seg0)
+
+
+def _layer_poly(mid0, mid1, center_offset, thickness, x0, x1):
+    """Create a polygon for a layer offset from a centerline segment."""
+    upper0, upper1 = _offset_segment(mid0, mid1, center_offset + thickness / 2)
+    lower0, lower1 = _offset_segment(mid0, mid1, center_offset - thickness / 2)
+    p0u = _pt_at_x(upper0, upper1, x0)
+    p1u = _pt_at_x(upper0, upper1, x1)
+    p1l = _pt_at_x(lower0, lower1, x1)
+    p0l = _pt_at_x(lower0, lower1, x0)
+    return [tuple(p) for p in [p0u, p1u, p1l, p0l]]
+
+
+
+
 def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None = None, spec: CatlinHouseSpec | None = None) -> Any:
     site = site or CatlinSitePlacement()
     spec = spec or CatlinHouseSpec()
 
     f, project, ifc_site, contexts = init_ifc_project(name="ifcPlot - Catlin House", schema="IFC4")
     groups = add_trade_groups(f)
+
+    # ---- Materials and Styles --------------------------------------------------
+    standing_seam_style = create_surface_style_with_texture(
+        f,
+        name="Standing Seam Metal",
+        texture_path="ifcplot/textures/standing_seam_texture.png",
+    )
 
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
@@ -431,12 +471,11 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
 
     # South gable wall matrix: profile in XY plane, extrude in +Z direction (local)
     # We need: local X → world X, local Y → world Z (up), local Z → world Y (into house)
-    south_gable_matrix = np.eye(4, dtype=float)
-    south_gable_matrix[0:3, 0] = (1.0, 0.0, 0.0)  # local X -> world +X (along wall)
-    south_gable_matrix[0:3, 1] = (0.0, 0.0, 1.0)  # local Y -> world +Z (up)
-    south_gable_matrix[0:3, 2] = (0.0, 1.0, 0.0)  # local Z (extrusion) -> world +Y (into house)
-    # Placement relative to storey (House Attic, at attic_elev_m)
-    south_gable_matrix[0:3, 3] = (0.0, 0.0, 0.0)
+    south_gable_matrix = placement_matrix(
+        origin=(0.0, wall_upper_thk_m, 0.0),
+        x_axis=(1.0, 0.0, 0.0),  # local X -> world +X (along wall)
+        y_axis=(0.0, 0.0, 1.0),  # local Y -> world +Z (up)
+    )
 
     south_gable_wall = add_prism_from_profile(
         f,
@@ -451,12 +490,11 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
 
     # North gable wall matrix: profile in XY plane, extrude in local +Z direction
     # We need: local X → world -X (mirror), local Y → world +Z (up), local Z → world -Y (into house)
-    north_gable_matrix = np.eye(4, dtype=float)
-    north_gable_matrix[0:3, 0] = (-1.0, 0.0, 0.0)  # local X -> world -X (mirrored along wall)
-    north_gable_matrix[0:3, 1] = (0.0, 0.0, 1.0)   # local Y -> world +Z (up)
-    north_gable_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z (extrusion) -> world -Y (into house)
-    # Placement relative to storey
-    north_gable_matrix[0:3, 3] = (house_size_m, house_size_m, 0.0)
+    north_gable_matrix = placement_matrix(
+        origin=(house_size_m, house_size_m - wall_upper_thk_m, 0.0),
+        x_axis=(-1.0, 0.0, 0.0),  # local X -> world -X (mirrored along wall)
+        y_axis=(0.0, 0.0, 1.0),  # local Y -> world +Z (up)
+    )
 
     north_gable_wall = add_prism_from_profile(
         f,
@@ -498,6 +536,81 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         ),
     ]
     assign_to_group(f, group=groups["Framing"], products=[*main_shell_walls, *second_shell_walls, *attic_shell_walls])
+
+    # House Cladding
+    cladding_thk_m = inch(0.5)
+
+    def add_house_storey_cladding(storey: Any, *, elev_m: float, height_m: float, thickness_m: float, label: str) -> list[Any]:
+        offset = thickness_m / 2.0
+        segments = [
+            ((hx(-offset), hy(-offset)), (hx(house_size_m + offset), hy(-offset))),
+            ((hx(house_size_m + offset), hy(-offset)), (hx(house_size_m + offset), hy(house_size_m + offset))),
+            ((hx(house_size_m + offset), hy(house_size_m + offset)), (hx(-offset), hy(house_size_m + offset))),
+            ((hx(-offset), hy(house_size_m + offset)), (hx(-offset), hy(-offset))),
+        ]
+        walls = [
+            add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"House {label} Exterior Cladding {i+1}",
+                p1=p1,
+                p2=p2,
+                elevation=elev_m,
+                height=height_m,
+                thickness=cladding_thk_m,
+            )
+            for i, (p1, p2) in enumerate(segments)
+        ]
+        for wall in walls:
+            assign_surface_style(f, element=wall, style=standing_seam_style)
+        return walls
+
+    main_cladding_walls = add_house_storey_cladding(
+        house_main, elev_m=main_elev_m, height_m=ft(spec.main_storey_height_ft), thickness_m=wall_main_thk_m, label="Main"
+    )
+    second_cladding_walls = add_house_storey_cladding(
+        house_second,
+        elev_m=second_elev_m,
+        height_m=ft(spec.second_storey_height_ft),
+        thickness_m=wall_upper_thk_m,
+        label="Second",
+    )
+    assign_to_group(f, group=groups["Cladding"], products=[*main_cladding_walls, *second_cladding_walls])
+
+    # Cladding for attic gable walls
+    cladding_thk_m = inch(0.5)
+    offset = wall_upper_thk_m / 2.0
+
+    cladding_south_gable_matrix = south_gable_matrix.copy()
+    cladding_south_gable_matrix[0:3, 3] += offset * south_gable_matrix[0:3, 2]
+    south_gable_cladding = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=house_attic,
+        ifc_class="IfcWall",
+        name="House Attic Exterior Cladding South (gable)",
+        profile_points=gable_profile_south,
+        depth=cladding_thk_m,
+        placement_matrix=cladding_south_gable_matrix,
+    )
+    assign_surface_style(f, element=south_gable_cladding, style=standing_seam_style)
+
+    cladding_north_gable_matrix = north_gable_matrix.copy()
+    cladding_north_gable_matrix[0:3, 3] += offset * north_gable_matrix[0:3, 2]
+    north_gable_cladding = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=house_attic,
+        ifc_class="IfcWall",
+        name="House Attic Exterior Cladding North (gable)",
+        profile_points=gable_profile_south,  # Same profile, different orientation
+        depth=cladding_thk_m,
+        placement_matrix=cladding_north_gable_matrix,
+    )
+    assign_surface_style(f, element=north_gable_cladding, style=standing_seam_style)
+
+    assign_to_group(f, group=groups["Cladding"], products=[south_gable_cladding, north_gable_cladding])
 
     # House centerline load-bearing wall (runs N-S at x=18') for upper levels.
     center_wall_thk_m = inch(spec.centerline_wall_thickness_in)
@@ -626,42 +739,126 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     assign_to_group(f, group=second_floor_group, products=second_floor_joists)
     assign_to_group(f, group=attic_floor_group, products=attic_floor_joists)
 
-    # Roof: gable prism (placeholder) aligned to north-south ridge at x=18'.
-    overhang_m = inch(spec.roof_overhang_in)
+    # ---- House Roof Assembly ---------------------------------------------------
     pitch = spec.roof_pitch_rise_over_run
-
     eave_z_m = attic_elev_m + ft(spec.attic_knee_wall_height_ft)
     ridge_z_m = attic_elev_m + ft(spec.attic_ridge_height_above_floor_ft)
-    drop_m = float(pitch) * overhang_m
-    z0 = eave_z_m - drop_m
-    ridge_rel_m = ridge_z_m - z0
+    overhang_m = inch(spec.roof_overhang_in)
+    drop_m = pitch * overhang_m
+    roof_p = {
+        "pitch_rise_over_run": pitch,
+        "ijoist_depth_in": spec.roof_joist_depth_in,
+        "joist_width_in": spec.roof_joist_width_in,
+        "joist_spacing_in": spec.framing_spacing_in,
+        "sheathing_in": 0.75,
+        "polyiso_in": 2.0,
+        "eps_in": 4.0,
+        "membrane_in": 0.25,
+        "furring_in": 0.75,
+        "metal_roof_in": 0.5,
+        "overhang_in": spec.roof_overhang_in,
+    }
+    sheathing_m = inch(roof_p["sheathing_in"])
+    polyiso_m = inch(roof_p["polyiso_in"])
+    eps_m = inch(roof_p["eps_in"])
+    membrane_m = inch(roof_p["membrane_in"])
+    furring_m = inch(roof_p["furring_in"])
+    metal_roof_m = inch(roof_p["metal_roof_in"])
 
-    roof_profile = [
-        (-overhang_m, 0.0),
-        (house_size_m / 2.0, ridge_rel_m),
-        (house_size_m + overhang_m, 0.0),
-    ]
-    roof_depth_m = house_size_m + 2.0 * overhang_m
+    # Reference line: top of joists
+    joist_depth_m = inch(spec.roof_joist_depth_in)
 
-    roof_matrix = np.eye(4, dtype=float)
-    roof_matrix[0:3, 0] = (1.0, 0.0, 0.0)   # local X -> world +X (east-west)
-    roof_matrix[0:3, 1] = (0.0, 0.0, 1.0)   # local Y -> world +Z (up)
-    roof_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z (extrusion) -> world -Y (south)
-    # Relative to Storey (attic_elev_m)
-    roof_matrix[0:3, 3] = (0.0, house_size_m + overhang_m, float(z0 - attic_elev_m))
+    # Z-coordinates are relative to the attic storey elevation
+    z_w_eave = (eave_z_m - attic_elev_m) + joist_depth_m / 2.0
+    z_w_ridge = (ridge_z_m - attic_elev_m) + joist_depth_m / 2.0
+    z_e_eave = z_w_eave
+    z_e_ridge = z_w_ridge
 
-    house_roof = add_prism_from_profile(
-        f,
-        context=contexts.body,
-        storey=house_attic,
-        ifc_class="IfcRoof",
-        name="House Roof (placeholder prism)",
-        profile_points=roof_profile,
-        depth=roof_depth_m,
-        placement_matrix=roof_matrix,
-        predefined_type="GABLE_ROOF",
+    # X-coordinates for the roof centerline segments
+    x_ridge = house_size_m / 2.0
+    x_w_eave = 0.0
+    x_e_eave = house_size_m
+
+    # Centerline segments for the roof slopes (in local XY plane for prism profile)
+    mid0_w = np.array([x_w_eave - overhang_m, z_w_eave - drop_m])
+    mid1_w = np.array([x_ridge, z_w_ridge])
+
+    mid0_e = np.array([x_ridge, z_e_ridge])
+    mid1_e = np.array([x_e_eave + overhang_m, z_e_eave - drop_m])
+
+    roof_len_m = house_size_m + 2.0 * overhang_m
+
+    # Matrix to place the roof layers
+    roof_matrix = placement_matrix(
+        origin=(0.0, house_size_m + overhang_m, 0.0),
+        x_axis=(1.0, 0.0, 0.0),
+        y_axis=(0.0, 0.0, 1.0),
     )
-    assign_to_group(f, group=groups["Framing"], products=[house_roof])
+
+    house_roof_elements = []
+
+    def create_layer(name, mid0, mid1, offset, thick, x0, x1, matrix):
+        poly = _layer_poly(mid0, mid1, offset, thick, x0, x1)
+        el = add_prism_from_profile(
+            f, context=contexts.body, storey=house_attic,
+            ifc_class="IfcRoof", name=name,
+            profile_points=poly, depth=roof_len_m,
+            placement_matrix=matrix,
+        )
+        house_roof_elements.append(el)
+        return el
+
+    # West Roof Layers
+    offset = sheathing_m / 2.0
+    sheath_w = create_layer("House Roof Sheathing (W)", mid0_w, mid1_w, offset, sheathing_m, mid0_w[0], mid1_w[0], roof_matrix)
+    
+    offset += sheathing_m / 2.0 + membrane_m / 2.0
+    mem1_w = create_layer("House Roof Membrane 1 (W)", mid0_w, mid1_w, offset, membrane_m, mid0_w[0], mid1_w[0], roof_matrix)
+
+    offset += membrane_m / 2.0 + polyiso_m / 2.0
+    poly_w = create_layer("House Roof Polyiso (W)", mid0_w, mid1_w, offset, polyiso_m, mid0_w[0], mid1_w[0], roof_matrix)
+
+    offset += polyiso_m / 2.0 + eps_m / 2.0
+    eps_w = create_layer("House Roof EPS (W)", mid0_w, mid1_w, offset, eps_m, mid0_w[0], mid1_w[0], roof_matrix)
+    
+    offset += eps_m / 2.0 + membrane_m / 2.0
+    mem2_w = create_layer("House Roof Membrane 2 (W)", mid0_w, mid1_w, offset, membrane_m, mid0_w[0], mid1_w[0], roof_matrix)
+
+    offset += membrane_m / 2.0 + furring_m / 2.0
+    furring_w = create_layer("House Roof Furring (W)", mid0_w, mid1_w, offset, furring_m, mid0_w[0], mid1_w[0], roof_matrix)
+    
+    offset += furring_m / 2.0 + metal_roof_m / 2.0
+    metal_w = create_layer("House Roof Cladding (W)", mid0_w, mid1_w, offset, metal_roof_m, mid0_w[0], mid1_w[0], roof_matrix)
+    assign_surface_style(f, element=metal_w, style=standing_seam_style)
+    
+    # East Roof Layers
+    offset = sheathing_m / 2.0
+    sheath_e = create_layer("House Roof Sheathing (E)", mid0_e, mid1_e, offset, sheathing_m, mid0_e[0], mid1_e[0], roof_matrix)
+
+    offset += sheathing_m / 2.0 + membrane_m / 2.0
+    mem1_e = create_layer("House Roof Membrane 1 (E)", mid0_e, mid1_e, offset, membrane_m, mid0_e[0], mid1_e[0], roof_matrix)
+    
+    offset += membrane_m / 2.0 + polyiso_m / 2.0
+    poly_e = create_layer("House Roof Polyiso (E)", mid0_e, mid1_e, offset, polyiso_m, mid0_e[0], mid1_e[0], roof_matrix)
+    
+    offset += polyiso_m / 2.0 + eps_m / 2.0
+    eps_e = create_layer("House Roof EPS (E)", mid0_e, mid1_e, offset, eps_m, mid0_e[0], mid1_e[0], roof_matrix)
+
+    offset += eps_m / 2.0 + membrane_m / 2.0
+    mem2_e = create_layer("House Roof Membrane 2 (E)", mid0_e, mid1_e, offset, membrane_m, mid0_e[0], mid1_e[0], roof_matrix)
+
+    offset += membrane_m / 2.0 + furring_m / 2.0
+    furring_e = create_layer("House Roof Furring (E)", mid0_e, mid1_e, offset, furring_m, mid0_e[0], mid1_e[0], roof_matrix)
+    
+    offset += furring_m / 2.0 + metal_roof_m / 2.0
+    metal_e = create_layer("House Roof Cladding (E)", mid0_e, mid1_e, offset, metal_roof_m, mid0_e[0], mid1_e[0], roof_matrix)
+    assign_surface_style(f, element=metal_e, style=standing_seam_style)
+
+    assign_to_group(f, group=groups["Framing"], products=[sheath_w, sheath_e, furring_w, furring_e])
+    assign_to_group(f, group=groups["Cladding"], products=[metal_w, metal_e])
+    
+    # Assign a primary roof element for property sets
+    house_roof = sheath_w
 
     # Roof joists (IFC framing members): same spacing, 4:12 slope, spanning ridge to side walls.
     roof_joist_w_m = inch(spec.roof_joist_width_in)
@@ -732,13 +929,14 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
             "overhang_in": spec.roof_overhang_in,
         },
     }
-    set_pset_json(
-        f,
-        product=house_roof,
-        pset_name="Pset_ifcPlot_DetailParams",
-        prop_name="ParamsJSON",
-        value=roof_detail_params,
-    )
+    if house_roof:
+        set_pset_json(
+            f,
+            product=house_roof,
+            pset_name="Pset_ifcPlot_DetailParams",
+            prop_name="ParamsJSON",
+            value=roof_detail_params,
+        )
 
     # House-level framing parameters for reuse in scripts.
     framing_params = {

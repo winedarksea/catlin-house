@@ -4,8 +4,9 @@ Shared helper functions for plotting construction detail schematics.
 
 import textwrap
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 
 import numpy as np
 from matplotlib.patches import Circle, FancyBboxPatch, Polygon, Rectangle
@@ -520,3 +521,61 @@ class BasementConcreteWallAssembly:
         layers["interior_face"] = layers["concrete"][0]
         layers["exterior_face"] = layers["cladding"][1]
         return layers
+
+def load_markdown_notes(path: Union[str, Path], *, header: str = "NOTES:") -> list[str]:
+    p = Path(path)
+    lines = p.read_text(encoding="utf-8").splitlines()
+
+    i = 0
+    if lines and lines[0].strip() == "---":
+        i = 1
+        while i < len(lines) and lines[i].strip() != "---":
+            i += 1
+        if i < len(lines) and lines[i].strip() == "---":
+            i += 1
+
+    out: list[str] = [header, ""]
+    pending_bullet: list[str] | None = None
+
+    def flush_bullet() -> None:
+        nonlocal pending_bullet
+        if not pending_bullet:
+            pending_bullet = None
+            return
+        text = " ".join(part.strip() for part in pending_bullet if part.strip()).strip()
+        if text:
+            out.append(f"• {text}")
+            out.append("")
+        pending_bullet = None
+
+    def add_blank() -> None:
+        if out and out[-1] != "":
+            out.append("")
+
+    for raw in lines[i:]:
+        if not raw.strip():
+            flush_bullet()
+            add_blank()
+            continue
+
+        stripped = raw.lstrip()
+        if stripped.startswith("#"):
+            flush_bullet()
+            continue
+
+        if (stripped.startswith("- ") or stripped.startswith("* ")) and not stripped.startswith(("- [", "* [")):
+            flush_bullet()
+            pending_bullet = [stripped[2:].strip()]
+            continue
+
+        if pending_bullet is not None and (raw.startswith("  ") or raw.startswith("\t")):
+            pending_bullet.append(stripped.strip())
+            continue
+
+        flush_bullet()
+        out.append(stripped.rstrip())
+
+    flush_bullet()
+    while out and out[-1] == "":
+        out.pop()
+    return out

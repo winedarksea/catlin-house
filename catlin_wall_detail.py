@@ -3,7 +3,7 @@ import numpy as np
 import textwrap
 from matplotlib.patches import Patch
 
-from detail_utils import COLORS, HATCHES, _batt_insulation, _rect, _screw, _stud_pattern
+from ifcplot.detail_utils import COLORS, HATCHES, _batt_insulation, _rect, _screw, _stud_pattern
 
 # ----------------------------
 # Figure layout with notes panel

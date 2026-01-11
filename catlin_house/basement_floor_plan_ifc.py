@@ -41,7 +41,7 @@ def _get_house_plan_params(ifc_path: Path) -> dict:
 
 
 def main() -> None:
-    ifc_path = Path("catlin-house/out/catlin_house.ifc")
+    ifc_path = Path("catlin_house/out/catlin_house.ifc")
     params = _get_house_plan_params(ifc_path)
 
     size_m = float(params["house_size_m"])

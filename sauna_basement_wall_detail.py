@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Patch, Polygon
 
-from detail_utils import (
+from ifcplot.detail_utils import (
     COLORS,
     HATCHES,
     BasementConcreteWallAssembly,

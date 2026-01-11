@@ -21,7 +21,7 @@ from matplotlib.patches import Patch, Polygon, Rectangle
 import ifcopenshell
 import ifcopenshell.util.element
 
-from detail_utils import (
+from ifcplot.detail_utils import (
     COLORS,
     HATCHES,
     ExteriorWoodWallAssembly,
@@ -31,6 +31,7 @@ from detail_utils import (
     _offset_segment,
     _quad_from_segment,
     _rect,
+    load_markdown_notes,
     _wrap_notes,
 )
 
@@ -63,7 +64,7 @@ def _load_house_roof_params(ifc_path: Path) -> dict:
 
 
 def main() -> None:
-    ifc_path = Path("catlin-house/out/catlin_house.ifc")
+    ifc_path = Path("catlin_house/out/catlin_house.ifc")
     params = _load_house_roof_params(ifc_path)
 
     wall_p = params["wall"]
@@ -335,27 +336,9 @@ def main() -> None:
     ax_notes.set_ylim(0, 150)
     ax_notes.axis("off")
 
-    raw_notes = [
-        "NOTES:",
-        "",
-        "• Roof framing: I-joists bear on double top plate with birdsmouth cut + beveled bearing stiffeners (APA D710 10h). Roof slope 4:12.",
-        "",
-        "• Roof sheathing: 3/4\" Struct 1 plywood with liquid-applied membrane as PRIMARY AIR BARRIER. Roof sheathing extends to overlap wall sheathing/membrane for continuity.",
-        "",
-        "• Roof CI: inner layer 2\" polyiso (seams staggered but not taped) + outer 4\" EPS (seams taped). Roofing membrane over EPS, under roof furring.",
-        "",
-        "• Roof nailer cavity: 3/4\" plywood furring strips (3.5\" wide) over membrane. Maintains vented path from ridge vent down to eave.",
-        "",
-        "• Wall: 2x4 studs with R-13 batt insulation. 5/8\" Struct 1 plywood sheathing, taped, with liquid membrane air barrier. Continuous CI = 2\" polyiso + 2\" EPS.",
-        "",
-        "• Wall furring: 1/2\" Struct 1 plywood, 3.5\" wide, over CI; fasten per IRC Table R703.15.2.",
-        "",
-        "• Foam interface: leave angled mismatch between roof foam and wall foam; fill gaps with closed-cell spray polyurethane foam.",
-        "",
-        "• Gutter: 6\" box gutter with angled fascia face.",
-        "",
-        f"IFC PARAMETERS: Pitch {pitch:.4g}, Overhang {overhang:g}\", I-joist {depth_ijoist:g}\"",
-    ]
+    repo_root = Path(__file__).resolve().parents[1]
+    raw_notes = load_markdown_notes(repo_root / "notes/roof_wall_eave_detail.md")
+    raw_notes.extend(["", f'IFC PARAMETERS: Pitch {pitch:.4g}, Overhang {overhang:g}", I-joist {depth_ijoist:g}"'])
     ax_notes.text(4, 146, _wrap_notes(raw_notes), fontsize=9, va="top", ha="left", family="monospace")
 
     out_path = Path("catlin_house/out/roof_wall_eave_detail_ifc.png")
@@ -365,4 +348,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

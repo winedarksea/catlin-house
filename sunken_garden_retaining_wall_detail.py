@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
 
-from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _dotted_pipe, _leader, _pipe, _poly, _rebar_L, _rebar_h, _rect, _wrap_notes
+from ifcplot.detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _dotted_pipe, _leader, _pipe, _poly, _rebar_L, _rebar_h, _rect, _wrap_notes
 
 
 def main():

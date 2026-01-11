@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
+# Add parent directory to path to allow imports when run as a script
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from .ifc_utils import (
+import numpy as np
+import ifcopenshell
+
+from ifcplot.ifc_utils import (
     add_building,
     add_prism_from_profile,
+    add_rect_member_between_points,
     add_slab,
     add_storey,
     add_trade_groups,
@@ -19,7 +25,7 @@ from .ifc_utils import (
     set_pset_json,
     translation_matrix,
 )
-from .units import ft, inch
+from ifcplot.units import ft, inch
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,13 @@ class CatlinHouseSpec:
 
     roof_pitch_rise_over_run: float = 4.0 / 12.0
     roof_overhang_in: float = 16.0
+
+    framing_spacing_in: float = 16.0
+    floor_joist_width_in: float = 1.5
+    floor_joist_depth_in: float = 11.875
+    roof_joist_width_in: float = 1.5
+    roof_joist_depth_in: float = 11.875
+    centerline_wall_thickness_in: float = 5.5  # 2x6
 
     # Garage
     garage_icf_above_grade_in: float = 22.0
@@ -287,6 +300,82 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     )
     assign_to_group(f, group=groups["Concrete"], products=[basement_slab, shower_recess])
 
+    # Main floor concrete ceiling slab (9" thick, at elevation 0)
+    main_floor_slab = add_slab(
+        f,
+        context=contexts.body,
+        storey=house_main,
+        name="House Main Floor Concrete Slab",
+        polyline=_rect_polyline_xy((hx(0.0), hy(0.0)), (house_size_m, house_size_m)),
+        elevation=main_elev_m - inch(spec.basement_ceiling_slab_thickness_in),
+        depth=inch(spec.basement_ceiling_slab_thickness_in),
+        predefined_type="FLOOR",
+    )
+    assign_to_group(f, group=groups["Concrete"], products=[main_floor_slab])
+
+    # Upper floor coverings: drywall (5/8") + subfloor (3/4") + carpet (1/4")
+    drywall_thk_m = inch(0.625)
+    subfloor_thk_m = inch(0.75)
+    carpet_thk_m = inch(0.25)
+
+    # Second floor covering (below second floor joists, above main floor)
+    second_floor_drywall = add_slab(
+        f,
+        context=contexts.body,
+        storey=house_main,
+        name="House Main Floor Ceiling Drywall",
+        polyline=_rect_polyline_xy((hx(0.0), hy(0.0)), (house_size_m, house_size_m)),
+        elevation=second_elev_m - inch(spec.floor_joist_depth_in) - drywall_thk_m,
+        depth=drywall_thk_m,
+        predefined_type="FLOOR",
+    )
+    second_floor_subfloor = add_slab(
+        f,
+        context=contexts.body,
+        storey=house_second,
+        name="House Second Floor Subfloor",
+        polyline=_rect_polyline_xy((hx(0.0), hy(0.0)), (house_size_m, house_size_m)),
+        elevation=second_elev_m,
+        depth=subfloor_thk_m,
+        predefined_type="FLOOR",
+    )
+    second_floor_carpet = add_slab(
+        f,
+        context=contexts.body,
+        storey=house_second,
+        name="House Second Floor Carpet",
+        polyline=_rect_polyline_xy((hx(0.0), hy(0.0)), (house_size_m, house_size_m)),
+        elevation=second_elev_m + subfloor_thk_m,
+        depth=carpet_thk_m,
+        predefined_type="FLOOR",
+    )
+    assign_to_group(f, group=groups["Drywall"], products=[second_floor_drywall])
+    assign_to_group(f, group=groups["Framing"], products=[second_floor_subfloor, second_floor_carpet])
+
+    # Attic floor covering (below attic floor joists, above second floor)
+    attic_floor_drywall = add_slab(
+        f,
+        context=contexts.body,
+        storey=house_second,
+        name="House Second Floor Ceiling Drywall",
+        polyline=_rect_polyline_xy((hx(0.0), hy(0.0)), (house_size_m, house_size_m)),
+        elevation=attic_elev_m - inch(spec.floor_joist_depth_in) - drywall_thk_m,
+        depth=drywall_thk_m,
+        predefined_type="FLOOR",
+    )
+    attic_floor_subfloor = add_slab(
+        f,
+        context=contexts.body,
+        storey=house_attic,
+        name="House Attic Floor Subfloor",
+        polyline=_rect_polyline_xy((hx(0.0), hy(0.0)), (house_size_m, house_size_m)),
+        elevation=attic_elev_m,
+        depth=subfloor_thk_m,
+        predefined_type="FLOOR",
+    )
+    assign_to_group(f, group=groups["Drywall"], products=[attic_floor_drywall])
+    assign_to_group(f, group=groups["Framing"], products=[attic_floor_subfloor])
+
     # House above-grade shell walls: simple sheathing-envelope walls.
     wall_main_thk_m = inch(5.5 + 0.625)  # 2x6 + 5/8" sheathing
     wall_upper_thk_m = inch(3.5 + 0.625)  # 2x4 + 5/8" sheathing
@@ -323,14 +412,219 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         thickness_m=wall_upper_thk_m,
         label="Second",
     )
-    attic_shell_walls = add_house_storey_shell(
-        house_attic,
-        elev_m=attic_elev_m,
-        height_m=ft(spec.attic_knee_wall_height_ft),
-        thickness_m=wall_upper_thk_m,
-        label="Attic",
+    # Attic walls: east/west knee walls at 5', north/south gable ends with triangular top.
+    # Gable ends: rectangular base (5' high) + triangular peak (6' additional at center)
+    knee_wall_h_m = ft(spec.attic_knee_wall_height_ft)
+    ridge_h_m = ft(spec.attic_ridge_height_above_floor_ft)
+    gable_triangle_h_m = ridge_h_m - knee_wall_h_m  # Height of the triangular portion
+
+    # South gable wall: base rectangle (5' high) + triangular peak
+    # Profile for gable: rectangle with triangle on top
+    # Points: bottom-left, bottom-right, top-right (at knee height), peak (center at ridge), top-left (at knee height)
+    gable_profile_south = [
+        (0.0, 0.0),  # bottom-left
+        (house_size_m, 0.0),  # bottom-right
+        (house_size_m, knee_wall_h_m),  # top-right at knee wall
+        (house_size_m / 2.0, ridge_h_m),  # peak at center
+        (0.0, knee_wall_h_m),  # top-left at knee wall
+    ]
+
+    # South gable wall matrix: profile in XY plane, extrude in +Z direction (local)
+    # We need: local X → world X, local Y → world Z (up), local Z → world Y (into house)
+    south_gable_matrix = np.eye(4, dtype=float)
+    south_gable_matrix[0:3, 0] = (1.0, 0.0, 0.0)  # local X -> world +X (along wall)
+    south_gable_matrix[0:3, 1] = (0.0, 0.0, 1.0)  # local Y -> world +Z (up)
+    south_gable_matrix[0:3, 2] = (0.0, 1.0, 0.0)  # local Z (extrusion) -> world +Y (into house)
+    # Placement relative to storey (House Attic, at attic_elev_m)
+    south_gable_matrix[0:3, 3] = (0.0, 0.0, 0.0)
+
+    south_gable_wall = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=house_attic,
+        ifc_class="IfcWall",
+        name="House Attic Exterior Wall South (gable)",
+        profile_points=gable_profile_south,
+        depth=wall_upper_thk_m,
+        placement_matrix=south_gable_matrix,
     )
+
+    # North gable wall matrix: profile in XY plane, extrude in local +Z direction
+    # We need: local X → world -X (mirror), local Y → world +Z (up), local Z → world -Y (into house)
+    north_gable_matrix = np.eye(4, dtype=float)
+    north_gable_matrix[0:3, 0] = (-1.0, 0.0, 0.0)  # local X -> world -X (mirrored along wall)
+    north_gable_matrix[0:3, 1] = (0.0, 0.0, 1.0)   # local Y -> world +Z (up)
+    north_gable_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z (extrusion) -> world -Y (into house)
+    # Placement relative to storey
+    north_gable_matrix[0:3, 3] = (house_size_m, house_size_m, 0.0)
+
+    north_gable_wall = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=house_attic,
+        ifc_class="IfcWall",
+        name="House Attic Exterior Wall North (gable)",
+        profile_points=gable_profile_south,  # Same profile, different orientation
+        depth=wall_upper_thk_m,
+        placement_matrix=north_gable_matrix,
+    )
+
+    attic_shell_walls = [
+        south_gable_wall,
+        # East wall (knee wall)
+        add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name="House Attic Exterior Wall East (knee)",
+            p1=(hx(house_size_m), hy(0.0)),
+            p2=(hx(house_size_m), hy(house_size_m)),
+            elevation=attic_elev_m,
+            height=ft(spec.attic_knee_wall_height_ft),
+            thickness=wall_upper_thk_m,
+        ),
+        north_gable_wall,
+        # West wall (knee wall)
+        add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name="House Attic Exterior Wall West (knee)",
+            p1=(hx(0.0), hy(house_size_m)),
+            p2=(hx(0.0), hy(0.0)),
+            elevation=attic_elev_m,
+            height=ft(spec.attic_knee_wall_height_ft),
+            thickness=wall_upper_thk_m,
+        ),
+    ]
     assign_to_group(f, group=groups["Framing"], products=[*main_shell_walls, *second_shell_walls, *attic_shell_walls])
+
+    # House centerline load-bearing wall (runs N-S at x=18') for upper levels.
+    center_wall_thk_m = inch(spec.centerline_wall_thickness_in)
+    centerline_walls = [
+        add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_main,
+            name="House Centerline Wall (Main)",
+            p1=(hx(grid_m), hy(0.0)),
+            p2=(hx(grid_m), hy(house_size_m)),
+            elevation=main_elev_m,
+            height=ft(spec.main_storey_height_ft),
+            thickness=center_wall_thk_m,
+        ),
+        add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_second,
+            name="House Centerline Wall (Second)",
+            p1=(hx(grid_m), hy(0.0)),
+            p2=(hx(grid_m), hy(house_size_m)),
+            elevation=second_elev_m,
+            height=ft(spec.second_storey_height_ft),
+            thickness=center_wall_thk_m,
+        ),
+        add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name="House Centerline Wall (Attic, ridge support)",
+            p1=(hx(grid_m), hy(0.0)),
+            p2=(hx(grid_m), hy(house_size_m)),
+            elevation=attic_elev_m,
+            height=ft(spec.attic_ridge_height_above_floor_ft),
+            thickness=center_wall_thk_m,
+        ),
+    ]
+    assign_to_group(f, group=groups["Framing"], products=centerline_walls)
+
+    # Floor joists (IFC framing members): 16" o.c. spanning between side walls and the centerline wall.
+    spacing_m = inch(spec.framing_spacing_in)
+    joist_w_m = inch(spec.floor_joist_width_in)
+    joist_d_m = inch(spec.floor_joist_depth_in)
+
+    def y_positions_m() -> list[float]:
+        ys: list[float] = []
+        y = 0.0
+        # Include both ends for now (rim joists / gable ends handled later).
+        while y <= house_size_m + 1e-9:
+            ys.append(float(y))
+            y += spacing_m
+        if ys[-1] < house_size_m - 1e-6:
+            ys.append(float(house_size_m))
+        return ys
+
+    second_floor_joists: list[Any] = []
+    attic_floor_joists: list[Any] = []
+    for i, y in enumerate(y_positions_m(), start=1):
+        # Joists relative to storey (elevations are local)
+        z_center_second = -joist_d_m / 2.0
+        second_floor_joists.append(
+            add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=house_second,
+                name=f"House Second Floor Joist W-{i:02d}",
+                p1=(0.0, y, float(z_center_second)),
+                p2=(grid_m, y, float(z_center_second)),
+                width=joist_w_m,
+                depth=joist_d_m,
+                predefined_type="JOIST",
+                ifc_class="IfcBeam",
+            )
+        )
+        second_floor_joists.append(
+            add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=house_second,
+                name=f"House Second Floor Joist E-{i:02d}",
+                p1=(grid_m, y, float(z_center_second)),
+                p2=(house_size_m, y, float(z_center_second)),
+                width=joist_w_m,
+                depth=joist_d_m,
+                predefined_type="JOIST",
+                ifc_class="IfcBeam",
+            )
+        )
+
+        z_center_attic = -joist_d_m / 2.0
+        attic_floor_joists.append(
+            add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=house_attic,
+                name=f"House Attic Floor Joist W-{i:02d}",
+                p1=(0.0, y, float(z_center_attic)),
+                p2=(grid_m, y, float(z_center_attic)),
+                width=joist_w_m,
+                depth=joist_d_m,
+                predefined_type="JOIST",
+                ifc_class="IfcBeam",
+            )
+        )
+        attic_floor_joists.append(
+            add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=house_attic,
+                name=f"House Attic Floor Joist E-{i:02d}",
+                p1=(grid_m, y, float(z_center_attic)),
+                p2=(house_size_m, y, float(z_center_attic)),
+                width=joist_w_m,
+                depth=joist_d_m,
+                predefined_type="JOIST",
+                ifc_class="IfcBeam",
+            )
+        )
+
+    assign_to_group(f, group=groups["Framing"], products=[*second_floor_joists, *attic_floor_joists])
+
+    # Optional grouping to keep joists tidy in viewers.
+    second_floor_group = ifcopenshell.api.run("group.add_group", f, name="House Second Floor Joists")
+    attic_floor_group = ifcopenshell.api.run("group.add_group", f, name="House Attic Floor Joists")
+    assign_to_group(f, group=second_floor_group, products=second_floor_joists)
+    assign_to_group(f, group=attic_floor_group, products=attic_floor_joists)
 
     # Roof: gable prism (placeholder) aligned to north-south ridge at x=18'.
     overhang_m = inch(spec.roof_overhang_in)
@@ -350,9 +644,11 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     roof_depth_m = house_size_m + 2.0 * overhang_m
 
     roof_matrix = np.eye(4, dtype=float)
-    roof_matrix[0:3, 0] = (1.0, 0.0, 0.0)  # local X -> world +X (east)
-    roof_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z -> world -Y (south)
-    roof_matrix[0:3, 3] = (hx(0.0), hy(house_size_m + overhang_m), float(z0))
+    roof_matrix[0:3, 0] = (1.0, 0.0, 0.0)   # local X -> world +X (east-west)
+    roof_matrix[0:3, 1] = (0.0, 0.0, 1.0)   # local Y -> world +Z (up)
+    roof_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z (extrusion) -> world -Y (south)
+    # Relative to Storey (attic_elev_m)
+    roof_matrix[0:3, 3] = (0.0, house_size_m + overhang_m, float(z0 - attic_elev_m))
 
     house_roof = add_prism_from_profile(
         f,
@@ -366,6 +662,50 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         predefined_type="GABLE_ROOF",
     )
     assign_to_group(f, group=groups["Framing"], products=[house_roof])
+
+    # Roof joists (IFC framing members): same spacing, 4:12 slope, spanning ridge to side walls.
+    roof_joist_w_m = inch(spec.roof_joist_width_in)
+    roof_joist_d_m = inch(spec.roof_joist_depth_in)
+    eave_z_m = attic_elev_m + ft(spec.attic_knee_wall_height_ft)
+    ridge_z_m = attic_elev_m + ft(spec.attic_ridge_height_above_floor_ft)
+
+    roof_joists: list[Any] = []
+    for i, y in enumerate(y_positions_m(), start=1):
+        # Local to Attic Storey
+        z_ridge_local = ridge_z_m - attic_elev_m
+        z_eave_local = eave_z_m - attic_elev_m
+
+        roof_joists.append(
+            add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=house_attic,
+                name=f"House Roof Joist W-{i:02d}",
+                p1=(grid_m, y, float(z_ridge_local)),
+                p2=(0.0, y, float(z_eave_local)),
+                width=roof_joist_w_m,
+                depth=roof_joist_d_m,
+                predefined_type="JOIST",
+                ifc_class="IfcBeam",
+            )
+        )
+        roof_joists.append(
+            add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=house_attic,
+                name=f"House Roof Joist E-{i:02d}",
+                p1=(grid_m, y, float(z_ridge_local)),
+                p2=(house_size_m, y, float(z_eave_local)),
+                width=roof_joist_w_m,
+                depth=roof_joist_d_m,
+                predefined_type="JOIST",
+                ifc_class="IfcBeam",
+            )
+        )
+    assign_to_group(f, group=groups["Framing"], products=roof_joists)
+    roof_joist_group = ifcopenshell.api.run("group.add_group", f, name="House Roof Joists")
+    assign_to_group(f, group=roof_joist_group, products=roof_joists)
 
     # Detail parameters stored on the roof (for IFC-driven detail scripts).
     roof_detail_params = {
@@ -381,6 +721,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         "roof": {
             "pitch_rise_over_run": pitch,
             "ijoist_depth_in": 11.875,
+            "joist_width_in": spec.roof_joist_width_in,
+            "joist_spacing_in": spec.framing_spacing_in,
             "sheathing_in": 0.75,
             "polyiso_in": 2.0,
             "eps_in": 4.0,
@@ -397,6 +739,15 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         prop_name="ParamsJSON",
         value=roof_detail_params,
     )
+
+    # House-level framing parameters for reuse in scripts.
+    framing_params = {
+        "spacing_in": spec.framing_spacing_in,
+        "centerline_wall_thickness_in": spec.centerline_wall_thickness_in,
+        "floor_joists": {"width_in": spec.floor_joist_width_in, "depth_in": spec.floor_joist_depth_in},
+        "roof_joists": {"width_in": spec.roof_joist_width_in, "depth_in": spec.roof_joist_depth_in, "pitch_rise_over_run": pitch},
+    }
+    set_pset_json(f, product=house_bldg, pset_name="Pset_ifcPlot_HouseFraming", prop_name="ParamsJSON", value=framing_params)
 
     # ---- Garage shell ----------------------------------------------------------
     garage_size_m = ft(spec.garage_size_ft)
@@ -466,9 +817,11 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     g_roof_depth_m = garage_size_m + 2.0 * g_overhang_m
 
     g_roof_matrix = np.eye(4, dtype=float)
-    g_roof_matrix[0:3, 0] = (1.0, 0.0, 0.0)
-    g_roof_matrix[0:3, 2] = (0.0, -1.0, 0.0)
-    g_roof_matrix[0:3, 3] = (gx(0.0), gy(garage_size_m + g_overhang_m), float(g_z0))
+    g_roof_matrix[0:3, 0] = (1.0, 0.0, 0.0)   # local X -> world +X (east-west)
+    g_roof_matrix[0:3, 1] = (0.0, 0.0, 1.0)   # local Y -> world +Z (up)
+    g_roof_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z (extrusion) -> world -Y (south)
+    # Relative to Garage Level (Elev 0)
+    g_roof_matrix[0:3, 3] = (0.0, garage_size_m + g_overhang_m, float(g_z0))
 
     garage_roof = add_prism_from_profile(
         f,

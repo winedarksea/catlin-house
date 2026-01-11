@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Optional
 
 import numpy as np
+import numpy.typing as npt
 
 try:
     import ifcopenshell
@@ -19,6 +20,34 @@ except ModuleNotFoundError as exc:  # pragma: no cover
 class IfcContexts:
     model: "ifcopenshell.entity_instance"
     body: "ifcopenshell.entity_instance"
+
+
+def _unit(v: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    n = float(np.linalg.norm(v))
+    if n < 1e-12:
+        raise ValueError("Zero-length vector")
+    return v / n
+
+
+def placement_matrix(*, origin: tuple[float, float, float], x_axis: tuple[float, float, float], z_axis: tuple[float, float, float]) -> np.ndarray:
+    """
+    Return a 4x4 transform matrix suitable for `geometry.edit_object_placement`.
+
+    IfcOpenShell uses column 0 as the local X axis, column 1 as Y axis, and column 2 as the local Z axis.
+    The Y axis is computed as the cross product of Z and X to form a proper orthonormal basis.
+    """
+    m = np.eye(4, dtype=float)
+    x_unit = _unit(np.array(x_axis, dtype=float))
+    z_unit = _unit(np.array(z_axis, dtype=float))
+    # Compute Y as cross product of Z and X for right-handed coordinate system
+    y_unit = _unit(np.cross(z_unit, x_unit))
+    # Recompute X to ensure orthogonality
+    x_unit = _unit(np.cross(y_unit, z_unit))
+    m[0:3, 0] = x_unit
+    m[0:3, 1] = y_unit
+    m[0:3, 2] = z_unit
+    m[0:3, 3] = np.array(origin, dtype=float)
+    return m
 
 
 def translation_matrix(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> np.ndarray:
@@ -218,3 +247,63 @@ def add_prism_from_profile(
         ifcopenshell.api.run("type.assign_type", f, related_objects=[element], relating_type=element_type)
     return element
 
+
+def add_rect_member_between_points(
+    f: "ifcopenshell.file",
+    *,
+    context: Any,
+    storey: Any,
+    name: str,
+    p1: tuple[float, float, float],
+    p2: tuple[float, float, float],
+    width: float,
+    depth: float,
+    predefined_type: str = "JOIST",
+    member_type: Optional[Any] = None,
+    x_axis_hint: tuple[float, float, float] = (0.0, 1.0, 0.0),
+    ifc_class: str = "IfcBeam",
+) -> Any:
+    """
+    Add an `IfcBeam`/`IfcMember` with a rectangular section, extruded from `p1` to `p2`.
+
+    - `width` is the section X dimension (often the member thickness).
+    - `depth` is the section Y dimension (often the member depth).
+    - The extrusion direction is aligned to the member axis (local +Z).
+    """
+    p1v = np.array(p1, dtype=float)
+    p2v = np.array(p2, dtype=float)
+    axis = p2v - p1v
+    length = float(np.linalg.norm(axis))
+    if length < 1e-9:
+        raise ValueError(f"Member `{name}` has zero length")
+
+    z_axis = _unit(axis)
+    x_hint = _unit(np.array(x_axis_hint, dtype=float))
+    if abs(float(np.dot(z_axis, x_hint))) > 0.99:
+        x_hint = _unit(np.array((1.0, 0.0, 0.0), dtype=float))
+        if abs(float(np.dot(z_axis, x_hint))) > 0.99:
+            x_hint = _unit(np.array((0.0, 0.0, 1.0), dtype=float))
+
+    member = ifcopenshell.api.run("root.create_entity", f, ifc_class=ifc_class, predefined_type=predefined_type, name=name)
+    ifcopenshell.api.run("spatial.assign_container", f, products=[member], relating_structure=storey)
+
+    # Create profile with explicit position at origin for proper rendering
+    profile_origin = f.createIfcCartesianPoint((0.0, 0.0))
+    profile_position = f.createIfcAxis2Placement2D(profile_origin, None)
+    profile = f.createIfcRectangleProfileDef("AREA", None, profile_position, float(width), float(depth))
+    
+    representation = ifcopenshell.api.run(
+        "geometry.add_profile_representation",
+        f,
+        context=context,
+        profile=profile,
+        depth=length,
+    )
+    ifcopenshell.api.run("geometry.assign_representation", f, product=member, representation=representation)
+
+    m = placement_matrix(origin=tuple(map(float, p1v)), x_axis=tuple(map(float, x_hint)), z_axis=tuple(map(float, z_axis)))
+    ifcopenshell.api.run("geometry.edit_object_placement", f, product=member, matrix=m)
+
+    if member_type is not None:
+        ifcopenshell.api.run("type.assign_type", f, related_objects=[member], relating_type=member_type)
+    return member

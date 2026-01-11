@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle, Patch, Polygon
 
-from detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
+from ifcplot.detail_utils import COLORS, HATCHES, _dim_h, _dim_v, _leader, _poly, _rect, _wrap_notes
 
 
 def _sloped_layer(x0, x1, y0, y1, thickness):

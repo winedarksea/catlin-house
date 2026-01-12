@@ -219,6 +219,7 @@ class ICFFoundationAssembly:
         return {
             "core_in": self.core_in,
             "eps_in": self.eps_in,
+            "coating_in": self.coating_in,
             "total_in": self.total_width_in,
             "above_grade_in": self.above_grade_in,
             "frost_depth_in": self.frost_depth_in,

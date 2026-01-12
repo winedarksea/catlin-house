@@ -14,6 +14,7 @@ import numpy as np
 import ifcopenshell
 
 from ifcplot.detail_utils import MATERIAL_COLORS
+from ifcplot.assemblies import GARAGE_ICF, GARAGE_WALL, ICFFoundationAssembly
 from ifcplot.ifc_utils import (
     add_building,
     add_prism_from_profile,
@@ -80,7 +81,9 @@ class CatlinHouseSpec:
 
     # Garage
     garage_icf_above_grade_in: float = 22.0
+    garage_frost_depth_in: float = 42.0
     garage_wood_wall_height_ft: float = 8.0
+    garage_slab_thickness_in: float = 3.5
     garage_roof_pitch_rise_over_run: float = 4.0 / 12.0
     garage_overhang_in: float = 16.0
 
@@ -153,6 +156,7 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     eps_style = create_surface_style_shading(f, name="EPS", rgb=hex_to_rgb(MATERIAL_COLORS["eps"]))
     membrane_style = create_surface_style_shading(f, name="Membrane", rgb=hex_to_rgb(MATERIAL_COLORS["membrane"]))
     framing_wood_style = create_surface_style_shading(f, name="Framing Wood", rgb=hex_to_rgb(MATERIAL_COLORS["wood"]))
+    metal_dark_style = create_surface_style_shading(f, name="Metal (Dark)", rgb=hex_to_rgb(MATERIAL_COLORS["metal_dark"]))
 
     standing_seam_style = create_surface_style_with_texture(
         f,
@@ -1186,10 +1190,23 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     def gy(y: float) -> float:
         return gy0 + float(y)
 
-    icf_h_m = inch(spec.garage_icf_above_grade_in)
-    icf_thk_m = inch(13.0)  # 8" core + ~2.5" EPS each side
+    garage_icf = ICFFoundationAssembly(
+        core_in=GARAGE_ICF.core_in,
+        eps_in=GARAGE_ICF.eps_in,
+        coating_in=GARAGE_ICF.coating_in,
+        above_grade_in=spec.garage_icf_above_grade_in,
+        frost_depth_in=spec.garage_frost_depth_in,
+    )
+    icf_above_grade_m = inch(garage_icf.above_grade_in)
+    icf_below_grade_m = inch(garage_icf.frost_depth_in)
+    icf_total_h_m = icf_above_grade_m + icf_below_grade_m
+
+    icf_eps_m = inch(garage_icf.eps_in)
+    icf_core_m = inch(garage_icf.core_in)
+    icf_total_thk_m = inch(garage_icf.total_width_in)
+
     wood_wall_h_m = ft(spec.garage_wood_wall_height_ft)
-    wood_wall_thk_m = inch(5.5 + 1.5)  # 2x6 + Zip-R 1.5" (used as sheathing envelope)
+    garage_wall = GARAGE_WALL
 
     garage_perim = [
         ((gx(0.0), gy(0.0)), (gx(garage_size_m), gy(0.0))),
@@ -1197,45 +1214,185 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         ((gx(garage_size_m), gy(garage_size_m)), (gx(0.0), gy(garage_size_m))),
         ((gx(0.0), gy(garage_size_m)), (gx(0.0), gy(0.0))),
     ]
-    garage_icf_walls = [
-        add_wall_between_points(
+    # ICF stem wall (includes below-grade portion down to frost depth).
+    icf_elev_m = -icf_below_grade_m
+    garage_icf_eps_ext = []
+    garage_icf_core = []
+    garage_icf_eps_int = []
+    for i, (p1, p2) in enumerate(garage_perim, start=1):
+        eps_ext = add_wall_between_points(
             f,
             context=contexts.body,
             storey=garage_level,
-            name=f"Garage ICF Stem Wall {i+1}",
+            name=f"Garage ICF EPS (Ext) {i}",
             p1=p1,
             p2=p2,
-            elevation=0.0,
-            height=icf_h_m,
-            thickness=icf_thk_m,
+            elevation=icf_elev_m,
+            height=icf_total_h_m,
+            thickness=icf_eps_m,
+            direction_sense="POSITIVE",  # inward from exterior face
+            offset=0.0,
         )
-        for i, (p1, p2) in enumerate(garage_perim)
-    ]
-    garage_wood_walls = [
-        add_wall_between_points(
+        core = add_wall_between_points(
             f,
             context=contexts.body,
             storey=garage_level,
-            name=f"Garage Wood Wall {i+1}",
+            name=f"Garage ICF Concrete Core {i}",
             p1=p1,
             p2=p2,
-            elevation=icf_h_m,
-            height=wood_wall_h_m,
-            thickness=wood_wall_thk_m,
+            elevation=icf_elev_m,
+            height=icf_total_h_m,
+            thickness=icf_core_m,
+            direction_sense="POSITIVE",
+            offset=icf_eps_m,
         )
-        for i, (p1, p2) in enumerate(garage_perim)
-    ]
-    assign_to_group(f, group=groups["Concrete"], products=garage_icf_walls)
-    assign_to_group(f, group=groups["Framing"], products=garage_wood_walls)
-    for wall in garage_icf_walls:
+        eps_int = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=garage_level,
+            name=f"Garage ICF EPS (Int) {i}",
+            p1=p1,
+            p2=p2,
+            elevation=icf_elev_m,
+            height=icf_total_h_m,
+            thickness=icf_eps_m,
+            direction_sense="POSITIVE",
+            offset=icf_eps_m + icf_core_m,
+        )
+        garage_icf_eps_ext.append(eps_ext)
+        garage_icf_core.append(core)
+        garage_icf_eps_int.append(eps_int)
+
+    assign_to_group(f, group=groups["Concrete"], products=garage_icf_core)
+    assign_to_group(f, group=groups["Cladding"], products=[*garage_icf_eps_ext, *garage_icf_eps_int])
+    for wall in garage_icf_core:
         assign_surface_style(f, element=wall, style=concrete_style)
-    for wall in garage_wood_walls:
+    for wall in [*garage_icf_eps_ext, *garage_icf_eps_int]:
+        assign_surface_style(f, element=wall, style=eps_style)
+
+    # Garage slab-on-grade.
+    garage_slab_thk_m = inch(spec.garage_slab_thickness_in)
+    slab_inner_size_m = garage_size_m - 2.0 * icf_total_thk_m
+    if slab_inner_size_m <= 0:
+        raise ValueError("Garage slab inner size must be positive")
+    garage_slab = add_slab(
+        f,
+        context=contexts.body,
+        storey=garage_level,
+        name="Garage Floor Slab",
+        polyline=_rect_polyline_xy((gx(icf_total_thk_m), gy(icf_total_thk_m)), (slab_inner_size_m, slab_inner_size_m)),
+        elevation=-garage_slab_thk_m,  # top of slab at grade (Z=0)
+        depth=garage_slab_thk_m,
+        predefined_type="FLOOR",
+    )
+    assign_to_group(f, group=groups["Concrete"], products=[garage_slab])
+    assign_surface_style(f, element=garage_slab, style=concrete_style)
+
+    # Above-grade framed wall layers (IFC-style: separate walls with offsets).
+    drywall_m = inch(garage_wall.drywall_in)
+    stud_m = inch(garage_wall.stud_depth_in)
+    zip_r_m = inch(garage_wall.sheathing_in)
+    rainscreen_m = inch(garage_wall.furring_in)
+    metal_siding_m = inch(garage_wall.cladding_in)
+
+    garage_wall_zip_r = []
+    garage_wall_studs = []
+    garage_wall_drywall = []
+    garage_wall_rainscreen = []
+    garage_wall_metal = []
+    for i, (p1, p2) in enumerate(garage_perim, start=1):
+        zip_r = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=garage_level,
+            name=f"Garage Zip-R Sheathing {i}",
+            p1=p1,
+            p2=p2,
+            elevation=icf_above_grade_m,
+            height=wood_wall_h_m,
+            thickness=zip_r_m,
+            direction_sense="POSITIVE",  # inward
+            offset=0.0,
+        )
+        studs = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=garage_level,
+            name=f"Garage Stud Wall {i}",
+            p1=p1,
+            p2=p2,
+            elevation=icf_above_grade_m,
+            height=wood_wall_h_m,
+            thickness=stud_m,
+            direction_sense="POSITIVE",
+            offset=zip_r_m,
+        )
+        drywall = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=garage_level,
+            name=f"Garage Interior Drywall {i}",
+            p1=p1,
+            p2=p2,
+            elevation=icf_above_grade_m,
+            height=wood_wall_h_m,
+            thickness=drywall_m,
+            direction_sense="POSITIVE",
+            offset=zip_r_m + stud_m,
+        )
+
+        rainscreen = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=garage_level,
+            name=f"Garage Rainscreen {i}",
+            p1=p1,
+            p2=p2,
+            elevation=icf_above_grade_m,
+            height=wood_wall_h_m,
+            thickness=rainscreen_m,
+            direction_sense="NEGATIVE",  # outward
+            offset=0.0,
+        )
+        metal = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=garage_level,
+            name=f"Garage Metal Siding {i}",
+            p1=p1,
+            p2=p2,
+            elevation=icf_above_grade_m,
+            height=wood_wall_h_m,
+            thickness=metal_siding_m,
+            direction_sense="NEGATIVE",
+            offset=-rainscreen_m,
+        )
+
+        garage_wall_zip_r.append(zip_r)
+        garage_wall_studs.append(studs)
+        garage_wall_drywall.append(drywall)
+        garage_wall_rainscreen.append(rainscreen)
+        garage_wall_metal.append(metal)
+
+    assign_to_group(f, group=groups["Framing"], products=[*garage_wall_zip_r, *garage_wall_studs])
+    assign_to_group(f, group=groups["Drywall"], products=garage_wall_drywall)
+    assign_to_group(f, group=groups["Cladding"], products=[*garage_wall_rainscreen, *garage_wall_metal])
+
+    for wall in garage_wall_zip_r:
+        assign_surface_style(f, element=wall, style=sheathing_style)
+    for wall in garage_wall_studs:
         assign_surface_style(f, element=wall, style=framing_wood_style)
+    for wall in garage_wall_drywall:
+        assign_surface_style(f, element=wall, style=drywall_style)
+    for wall in garage_wall_rainscreen:
+        assign_surface_style(f, element=wall, style=membrane_style)
+    for wall in garage_wall_metal:
+        assign_surface_style(f, element=wall, style=metal_dark_style)
 
     # Garage roof prism (placeholder).
     g_overhang_m = inch(spec.garage_overhang_in)
     g_pitch = spec.garage_roof_pitch_rise_over_run
-    g_eave_z_m = icf_h_m + wood_wall_h_m
+    g_eave_z_m = icf_above_grade_m + wood_wall_h_m
     g_drop_m = float(g_pitch) * g_overhang_m
     g_z0 = g_eave_z_m - g_drop_m
     g_ridge_rel_m = (g_eave_z_m + (garage_size_m / 2.0) * float(g_pitch)) - g_z0
@@ -1267,24 +1424,37 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     )
     assign_to_group(f, group=groups["Framing"], products=[garage_roof])
 
+    wall_params = garage_wall.to_ifc_params()
+    # Backward-compatible aliases for the garage detail script.
+    wall_params["zip_r_in"] = wall_params["sheathing_in"]
+    wall_params["rainscreen_in"] = wall_params["furring_in"]
+    wall_params["metal_siding_in"] = wall_params["cladding_in"]
+    wall_params["wood_wall_height_ft"] = spec.garage_wood_wall_height_ft
+
     garage_detail_params = {
-        "icf": {
-            "core_in": 8.0,
-            "eps_in": 2.5,
-            "total_in": 13.0,
-            "above_grade_in": spec.garage_icf_above_grade_in,
-        },
-        "wall": {
-            "drywall_in": 0.625,
-            "stud_depth_in": 5.5,
-            "zip_r_in": 1.5,
-            "rainscreen_in": 0.375,
-            "metal_siding_in": 0.5,
-            "wood_wall_height_ft": spec.garage_wood_wall_height_ft,
-        },
+        "icf": garage_icf.to_ifc_params(),
+        "wall": wall_params,
         "roof": {
             "pitch_rise_over_run": g_pitch,
             "overhang_in": spec.garage_overhang_in,
+        },
+        "foundation": {
+            "frost_depth_in": spec.garage_frost_depth_in,
+            "footing_thick_in": 6.0,
+            "footing_width_in": 12.0,
+        },
+        "slab": {
+            "thickness_in": spec.garage_slab_thickness_in,
+            "vapor_poly_in": 0.05,
+            "xps_in": 2.0,
+            "gravel_in": 4.0,
+        },
+        "framing": {
+            "sill_gasket_in": 0.25,
+            "sill_plate_in": 1.5,
+            "top_plate_in": 1.5,
+            "raised_heel_in": 6.0,
+            "truss_member_in": 3.5,
         },
     }
     set_pset_json(

@@ -53,37 +53,47 @@ def main() -> None:
     icf_p = params["icf"]
     wall_p = params["wall"]
     roof_p = params["roof"]
+    foundation_p = params.get("foundation", {})
+    slab_p = params.get("slab", {})
+    framing_p = params.get("framing", {})
+
+    def _p(d: dict, *keys: str, default: float) -> float:
+        for key in keys:
+            if key in d:
+                return float(d[key])
+        return float(default)
 
     # Units: inches (schematic)
-    icf_core = float(icf_p["core_in"])
-    icf_eps = float(icf_p["eps_in"])
-    icf_total = float(icf_p["total_in"])
-    icf_above_grade = float(icf_p["above_grade_in"])
-    icf_coating = 0.5  # protective coating thickness (schematic)
+    icf_core = _p(icf_p, "core_in", default=8.0)
+    icf_eps = _p(icf_p, "eps_in", default=2.5)
+    icf_total = _p(icf_p, "total_in", default=icf_core + 2.0 * icf_eps)
+    icf_above_grade = _p(icf_p, "above_grade_in", default=22.0)
+    icf_coating = _p(icf_p, "coating_in", default=0.5)
 
-    drywall = float(wall_p["drywall_in"])
-    stud_depth = float(wall_p["stud_depth_in"])
-    zip_r = float(wall_p["zip_r_in"])
-    rainscreen = float(wall_p["rainscreen_in"])
-    metal_siding = float(wall_p["metal_siding_in"])
-    wall_height = float(wall_p["wood_wall_height_ft"]) * 12.0
+    drywall = _p(wall_p, "drywall_in", default=0.625)
+    stud_depth = _p(wall_p, "stud_depth_in", default=5.5)
+    zip_r = _p(wall_p, "sheathing_in", "zip_r_in", default=1.5)
+    rainscreen = _p(wall_p, "furring_in", "rainscreen_in", default=0.375)
+    metal_siding = _p(wall_p, "cladding_in", "metal_siding_in", default=0.5)
+    wall_height = _p(wall_p, "wood_wall_height_ft", default=8.0) * 12.0
 
-    pitch = float(roof_p["pitch_rise_over_run"])
-    overhang = float(roof_p["overhang_in"])
-    
-    # Additional parameters not in IFC (yet)
-    frost_depth = 42.0
-    footing_thick = 6.0
-    footing_width = 12.0
-    slab_thick = 3.5
-    vapor_poly = 0.05
-    xps = 2.0
-    gravel = 4.0
-    sill_gasket = 0.25
-    sill_plate = 1.5
-    top_plate = 1.5
-    raised_heel = 6.0
-    truss_member = 3.5
+    pitch = _p(roof_p, "pitch_rise_over_run", default=4.0 / 12.0)
+    overhang = _p(roof_p, "overhang_in", default=16.0)
+
+    frost_depth = _p(foundation_p, "frost_depth_in", default=42.0)
+    footing_thick = _p(foundation_p, "footing_thick_in", default=6.0)
+    footing_width = _p(foundation_p, "footing_width_in", default=12.0)
+
+    slab_thick = _p(slab_p, "thickness_in", default=3.5)
+    vapor_poly = _p(slab_p, "vapor_poly_in", default=0.05)
+    xps = _p(slab_p, "xps_in", default=2.0)
+    gravel = _p(slab_p, "gravel_in", default=4.0)
+
+    sill_gasket = _p(framing_p, "sill_gasket_in", default=0.25)
+    sill_plate = _p(framing_p, "sill_plate_in", default=1.5)
+    top_plate = _p(framing_p, "top_plate_in", default=1.5)
+    raised_heel = _p(framing_p, "raised_heel_in", default=6.0)
+    truss_member = _p(framing_p, "truss_member_in", default=3.5)
     overhang_length = overhang
 
     fig = plt.figure(figsize=(20, 10))

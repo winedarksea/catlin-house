@@ -25,7 +25,7 @@ MATERIAL_COLORS = {
     "glass": "#BEE3F8",
     "insulation": "#DDECC8",
     "membrane": "#1E3A5F",
-    "metal": "#A7B5C6",
+    "metal": "#FFFFFF",
     "metal_dark": "#2F2F2F",
     "mineral_wool": "#A8A8A8",
     "osb": "#D9C8A0",

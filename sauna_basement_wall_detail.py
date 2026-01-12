@@ -46,7 +46,7 @@ def main():
     sauna_clear_w = 96.0  # 8'
     total_h = 108.0  # 9' to underside of joists (schematic)
 
-    conc_wall_thk = 12.0
+    conc_wall_thk = 10.0
     polyiso_thk = 2.0
     furring_thk = 0.5  # 1/2" plywood furring
     tg_thk = 1.0  # 5/4 T&G (1" actual)
@@ -460,7 +460,7 @@ def main():
         "",
         "• Indicators: provide an exterior “in use” light, tied to heater control or via current-sensing relay.",
         "",
-        "• Foundation: 12\" concrete wall bearing on 20\"×8\" footing per IRC Table R403.1 (confirm local requirements). Footing concrete 5000 psi. Footing bears on 6\" compacted washed stone aggregate (wider than footing) with French drain located in the wider area, not under the footing.",
+        "• Foundation: 10\" concrete wall bearing on 20\"×8\" footing per IRC Table R403.1 (confirm local requirements). Footing concrete 5000 psi. Footing bears on 6\" compacted washed stone aggregate (wider than footing) with French drain located in the wider area, not under the footing.",
     ]
     ax_notes.text(2, 146, _wrap_notes(raw_notes), fontsize=9, va="top", ha="left", family="monospace")
 

@@ -57,7 +57,7 @@ def main():
 
     furring = 0.5
     cladding = 0.5
-    conc_wall_thk = 12.0
+    conc_wall_thk = 10.0
 
     wall_layers = ExteriorWoodWallAssembly(
         drywall=drywall,

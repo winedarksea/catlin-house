@@ -55,3 +55,19 @@ def test_roof_has_detail_pset_json(tmp_path) -> None:
     assert "roof" in params
     assert "wall" in params
     assert params["roof"]["pitch_rise_over_run"] == CatlinHouseSpec().roof_pitch_rise_over_run
+
+
+def test_house_elements_have_surface_styles(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+
+    # Ensure we export multiple named surface styles (not just the wood framing).
+    style_names = {s.Name for s in f.by_type("IfcSurfaceStyle") if s.Name}
+    assert {"Concrete", "Sheathing/OSB", "Polyiso", "EPS", "Membrane", "Framing Wood", "Standing Seam Metal"} <= style_names
+
+    # Spot-check that representative elements actually reference a surface style (Bonsai otherwise shows default gray).
+    sheathing = next(w for w in f.by_type("IfcWall") if w.Name == "House Main Exterior Sheathing 1")
+    item = sheathing.Representation.Representations[0].Items[0]
+    assert item.StyledByItem

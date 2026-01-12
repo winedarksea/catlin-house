@@ -25,7 +25,7 @@ def main():
     # Colors
     COL = COLORS
     COL_CONC = COL.concrete
-    COL_GRAVEL = COL.stone
+    COL_GRAVEL = COL.aggregate
     COL_AGG = COL.aggregate
     COL_SOIL = COL.soil
     COL_XPS = COL.xps

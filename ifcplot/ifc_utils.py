@@ -266,15 +266,7 @@ def add_prism_from_profile(
         depth=float(depth),
     )
     ifcopenshell.api.run("geometry.assign_representation", f, product=element, representation=representation)
-    matrix = placement_matrix
-    if placement_is_storey_relative and getattr(storey, "ObjectPlacement", None):
-        # `get_local_placement` returns project units (often mm), whereas our helpers
-        # construct matrices in SI meters. Convert the storey translation into SI.
-        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
-        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
-        storey_matrix[0:3, 3] *= float(unit_scale)
-        matrix = storey_matrix @ placement_matrix
-    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=matrix)
+    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=placement_matrix)
     if element_type is not None:
         ifcopenshell.api.run("type.assign_type", f, related_objects=[element], relating_type=element_type)
     return element
@@ -305,12 +297,6 @@ def add_rect_member_between_points(
     """
     p1v = np.array(p1, dtype=float)
     p2v = np.array(p2, dtype=float)
-    if points_are_storey_relative and getattr(storey, "ObjectPlacement", None):
-        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
-        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
-        storey_matrix[0:3, 3] *= float(unit_scale)
-        p1v = (storey_matrix @ np.array([*p1v, 1.0], dtype=float))[0:3]
-        p2v = (storey_matrix @ np.array([*p2v, 1.0], dtype=float))[0:3]
     axis = p2v - p1v
     length = float(np.linalg.norm(axis))
     if length < 1e-9:
@@ -355,9 +341,12 @@ def create_surface_style_with_texture(
     texture_path: str,
     repeat_s: bool = True,
     repeat_t: bool = True,
+    rgb: tuple[float, float, float] | None = None,
 ) -> Any:
-    """Creates an IfcSurfaceStyleWithTextures."""
+    """Creates an IfcSurfaceStyle with a texture and optional fallback color."""
     style = ifcopenshell.api.run("style.add_style", f, name=name)
+    
+    # Always add texture
     ifcopenshell.api.run(
         "style.add_surface_style",
         f,
@@ -374,6 +363,32 @@ def create_surface_style_with_texture(
             ]
         },
     )
+
+    # Add fallback color if provided
+    if rgb:
+        r, g, b = (float(c) for c in rgb)
+        colour = {"Name": None, "Red": r, "Green": g, "Blue": b}
+        ifcopenshell.api.run(
+            "style.add_surface_style",
+            f,
+            style=style,
+            ifc_class="IfcSurfaceStyleShading",
+            attributes={"SurfaceColour": colour},
+        )
+        # Also add rendering style for better viewer support
+        # We explicitly set DiffuseColour as many modern viewers prioritize it.
+        ifcopenshell.api.run(
+            "style.add_surface_style",
+            f,
+            style=style,
+            ifc_class="IfcSurfaceStyleRendering",
+            attributes={
+                "SurfaceColour": colour,
+                "DiffuseColour": colour,
+                "Transparency": 0.0,
+            },
+        )
+    
     return style
 
 
@@ -388,19 +403,21 @@ def create_surface_style_shading(
     r, g, b = (float(c) for c in rgb)
     style = ifcopenshell.api.run("style.add_style", f, name=name)
     colour = {"Name": None, "Red": r, "Green": g, "Blue": b}
-    if transparency is None:
-        ifcopenshell.api.run(
-            "style.add_surface_style",
-            f,
-            style=style,
-            ifc_class="IfcSurfaceStyleShading",
-            attributes={"SurfaceColour": colour},
-        )
-        return style
+    
+    # Always add basic shading
+    ifcopenshell.api.run(
+        "style.add_surface_style",
+        f,
+        style=style,
+        ifc_class="IfcSurfaceStyleShading",
+        attributes={"SurfaceColour": colour},
+    )
+
+    # Also add rendering style for better viewer support (highly recommended for all materials)
     attrs: dict[str, Any] = {
         "SurfaceColour": colour,
-        "Transparency": float(transparency),
-        "ReflectanceMethod": "NOTDEFINED",
+        "DiffuseColour": colour,
+        "Transparency": float(transparency) if transparency is not None else 0.0,
     }
     ifcopenshell.api.run(
         "style.add_surface_style",

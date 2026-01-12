@@ -266,7 +266,16 @@ def add_prism_from_profile(
         depth=float(depth),
     )
     ifcopenshell.api.run("geometry.assign_representation", f, product=element, representation=representation)
-    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=placement_matrix)
+
+    matrix = placement_matrix
+    if placement_is_storey_relative and getattr(storey, "ObjectPlacement", None):
+        # Convert storey placement translation into SI meters so we can combine it with our SI matrices.
+        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
+        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
+        storey_matrix[0:3, 3] *= float(unit_scale)
+        matrix = storey_matrix @ placement_matrix
+
+    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=matrix)
     if element_type is not None:
         ifcopenshell.api.run("type.assign_type", f, related_objects=[element], relating_type=element_type)
     return element
@@ -297,6 +306,13 @@ def add_rect_member_between_points(
     """
     p1v = np.array(p1, dtype=float)
     p2v = np.array(p2, dtype=float)
+    if points_are_storey_relative and getattr(storey, "ObjectPlacement", None):
+        # Convert storey placement translation into SI meters so we can combine it with our SI points.
+        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
+        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
+        storey_matrix[0:3, 3] *= float(unit_scale)
+        p1v = (storey_matrix @ np.array([*p1v, 1.0], dtype=float))[0:3]
+        p2v = (storey_matrix @ np.array([*p2v, 1.0], dtype=float))[0:3]
     axis = p2v - p1v
     length = float(np.linalg.norm(axis))
     if length < 1e-9:

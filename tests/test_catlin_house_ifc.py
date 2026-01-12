@@ -8,6 +8,7 @@ import ifcopenshell.util.placement
 import pytest
 
 from ifcplot.catlin_house import CatlinHouseSpec, build_catlin_house_ifc
+from ifcplot.units import ft
 
 
 def test_build_catlin_house_ifc_has_centerline_wall_and_joists(tmp_path) -> None:
@@ -71,3 +72,23 @@ def test_house_elements_have_surface_styles(tmp_path) -> None:
     sheathing = next(w for w in f.by_type("IfcWall") if w.Name == "House Main Exterior Sheathing 1")
     item = sheathing.Representation.Representations[0].Items[0]
     assert item.StyledByItem
+
+
+def test_roof_and_gables_have_expected_absolute_placements(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    garage_roof = next(r for r in f.by_type("IfcRoof") if r.Name == "Garage Roof (placeholder prism)")
+    house_roof = next(r for r in f.by_type("IfcRoof") if r.Name == "House Roof Sheathing (W)")
+    gable = next(w for w in f.by_type("IfcWall") if w.Name == "House Attic Gable South Stud Wall")
+
+    m_garage = ifcopenshell.util.placement.get_local_placement(garage_roof.ObjectPlacement)
+    m_house = ifcopenshell.util.placement.get_local_placement(house_roof.ObjectPlacement)
+    m_gable = ifcopenshell.util.placement.get_local_placement(gable.ObjectPlacement)
+
+    # Garage is offset 48' east of the house.
+    assert float(m_garage[0, 3]) == pytest.approx(ft(48.0) * 1000.0, abs=1e-6)
+    # House roof + gables are placed at the attic elevation (18').
+    assert float(m_house[2, 3]) == pytest.approx(ft(18.0) * 1000.0, abs=1e-6)
+    assert float(m_gable[2, 3]) == pytest.approx(ft(18.0) * 1000.0, abs=1e-6)

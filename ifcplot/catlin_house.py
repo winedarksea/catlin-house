@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import ifcopenshell
 
+from ifcplot.detail_utils import MATERIAL_COLORS
 from ifcplot.ifc_utils import (
     add_building,
     add_prism_from_profile,
@@ -31,6 +32,13 @@ from ifcplot.ifc_utils import (
     placement_matrix,
 )
 from ifcplot.units import ft, inch
+
+
+def hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    """Convert hex color string to RGB tuple with values 0.0-1.0."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    return (r / 255.0, g / 255.0, b / 255.0)
 
 
 @dataclass(frozen=True)
@@ -56,6 +64,9 @@ class CatlinHouseSpec:
     attic_floor_elevation_ft: float = 18.0
     attic_knee_wall_height_ft: float = 5.0
     attic_ridge_height_above_floor_ft: float = 11.0
+    attic_gable_extra_height_ft: float = 1.0
+    attic_gable_siding_overlap_in: float = 5.0
+    attic_knee_siding_extra_height_ft: float = 1.0
 
     roof_pitch_rise_over_run: float = 4.0 / 12.0
     roof_overhang_in: float = 0.0
@@ -135,12 +146,20 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     if texture_src.exists():
         shutil.copy2(texture_src, texture_dst)
 
+    concrete_style = create_surface_style_shading(f, name="Concrete", rgb=hex_to_rgb(MATERIAL_COLORS["concrete"]))
+    drywall_style = create_surface_style_shading(f, name="Drywall", rgb=hex_to_rgb(MATERIAL_COLORS["drywall"]))
+    sheathing_style = create_surface_style_shading(f, name="Sheathing/OSB", rgb=hex_to_rgb(MATERIAL_COLORS["sheathing"]))
+    polyiso_style = create_surface_style_shading(f, name="Polyiso", rgb=hex_to_rgb(MATERIAL_COLORS["polyiso"]))
+    eps_style = create_surface_style_shading(f, name="EPS", rgb=hex_to_rgb(MATERIAL_COLORS["eps"]))
+    membrane_style = create_surface_style_shading(f, name="Membrane", rgb=hex_to_rgb(MATERIAL_COLORS["membrane"]))
+    framing_wood_style = create_surface_style_shading(f, name="Framing Wood", rgb=hex_to_rgb(MATERIAL_COLORS["wood"]))
+
     standing_seam_style = create_surface_style_with_texture(
         f,
         name="Standing Seam Metal",
         texture_path=texture_rel.as_posix(),
+        rgb=hex_to_rgb(MATERIAL_COLORS["metal_dark"]),
     )
-    framing_wood_style = create_surface_style_shading(f, name="Framing Wood", rgb=(0.72, 0.56, 0.38))
 
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
@@ -329,6 +348,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         )
     )
     assign_to_group(f, group=groups["Concrete"], products=basement_walls)
+    for wall in basement_walls:
+        assign_surface_style(f, element=wall, style=concrete_style)
 
     # Basement slab (+ placeholder shower recess)
     basement_slab = add_slab(
@@ -355,6 +376,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         predefined_type="FLOOR",
     )
     assign_to_group(f, group=groups["Concrete"], products=[basement_slab, shower_recess])
+    assign_surface_style(f, element=basement_slab, style=concrete_style)
+    assign_surface_style(f, element=shower_recess, style=concrete_style)
 
     # Main floor concrete ceiling slab (9" thick, at elevation 0)
     main_floor_slab = add_slab(
@@ -368,6 +391,7 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         predefined_type="FLOOR",
     )
     assign_to_group(f, group=groups["Concrete"], products=[main_floor_slab])
+    assign_surface_style(f, element=main_floor_slab, style=concrete_style)
 
     # Upper floor coverings: drywall (5/8") + subfloor (3/4") + carpet (1/4")
     drywall_thk_m = inch(0.625)
@@ -407,6 +431,9 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     )
     assign_to_group(f, group=groups["Drywall"], products=[second_floor_drywall])
     assign_to_group(f, group=groups["Framing"], products=[second_floor_subfloor, second_floor_carpet])
+    assign_surface_style(f, element=second_floor_drywall, style=drywall_style)
+    assign_surface_style(f, element=second_floor_subfloor, style=framing_wood_style)
+    assign_surface_style(f, element=second_floor_carpet, style=framing_wood_style)
 
     # Attic floor covering (below attic floor joists, above second floor)
     attic_floor_drywall = add_slab(
@@ -431,6 +458,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     )
     assign_to_group(f, group=groups["Drywall"], products=[attic_floor_drywall])
     assign_to_group(f, group=groups["Framing"], products=[attic_floor_subfloor])
+    assign_surface_style(f, element=attic_floor_drywall, style=drywall_style)
+    assign_surface_style(f, element=attic_floor_subfloor, style=framing_wood_style)
 
     # ---- Exterior Wall Layers (siding stack) ----------------------------------
     # Mirror the wall-side layers used in `catlin_house/roof_wall_eave_detail_ifc.py`.
@@ -552,6 +581,14 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
 
         assign_to_group(f, group=groups["Framing"], products=[*created["studs"], *created["sheathing"]])
         assign_to_group(f, group=groups["Cladding"], products=[*created["polyiso"], *created["eps"], *created["furring"], *created["metal"]])
+        for elem in created["sheathing"]:
+            assign_surface_style(f, element=elem, style=sheathing_style)
+        for elem in created["polyiso"]:
+            assign_surface_style(f, element=elem, style=polyiso_style)
+        for elem in created["eps"]:
+            assign_surface_style(f, element=elem, style=eps_style)
+        for elem in created["furring"]:
+            assign_surface_style(f, element=elem, style=framing_wood_style)
         return created
 
     perimeter_segments = [
@@ -578,28 +615,145 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         label="Second",
     )
 
-    # Attic knee walls (east/west only).
-    add_layered_wall_segments(
-        storey=house_attic,
-        elevation_m=attic_elev_m,
-        height_m=ft(spec.attic_knee_wall_height_ft),
-        stud_depth_m=inch(3.5),
-        segments=[
-            ((hx(house_size_m), hy(0.0)), (hx(house_size_m), hy(house_size_m))),  # east
-            ((hx(0.0), hy(house_size_m)), (hx(0.0), hy(0.0))),  # west
-        ],
-        label="Attic Knee",
-    )
+    # Attic knee walls (east/west only). Extend the siding stack upward to cover roof joists.
+    attic_knee_height_m = ft(spec.attic_knee_wall_height_ft)
+    attic_knee_siding_height_m = attic_knee_height_m + ft(spec.attic_knee_siding_extra_height_ft)
+    attic_knee_segments = [
+        ((hx(house_size_m), hy(0.0)), (hx(house_size_m), hy(house_size_m))),  # east
+        ((hx(0.0), hy(house_size_m)), (hx(0.0), hy(0.0))),  # west
+    ]
+    attic_knee_layers: dict[str, list[Any]] = {"studs": [], "sheathing": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
+    for i, (p1, p2) in enumerate(attic_knee_segments, start=1):
+        sheathing = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Knee Exterior Sheathing {i}",
+            p1=p1,
+            p2=p2,
+            elevation=attic_elev_m,
+            height=attic_knee_siding_height_m,
+            thickness=wall_sheathing_m,
+            direction_sense="POSITIVE",  # into house
+            offset=0.0,  # starts at outer face
+        )
+        studs = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Knee Stud Wall {i}",
+            p1=p1,
+            p2=p2,
+            elevation=attic_elev_m,
+            height=attic_knee_height_m,
+            thickness=inch(3.5),
+            direction_sense="POSITIVE",  # into house
+            offset=wall_sheathing_m,  # behind sheathing
+        )
+
+        outward_offset = 0.0
+        polyiso = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Knee Exterior Polyiso {i}",
+            p1=p1,
+            p2=p2,
+            elevation=attic_elev_m,
+            height=attic_knee_siding_height_m,
+            thickness=wall_polyiso_m,
+            direction_sense="NEGATIVE",  # outward
+            offset=-outward_offset,
+        )
+        outward_offset += wall_polyiso_m
+
+        eps = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Knee Exterior EPS {i}",
+            p1=p1,
+            p2=p2,
+            elevation=attic_elev_m,
+            height=attic_knee_siding_height_m,
+            thickness=wall_eps_m,
+            direction_sense="NEGATIVE",  # outward
+            offset=-outward_offset,
+        )
+        outward_offset += wall_eps_m
+
+        furring = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Knee Exterior Furring {i}",
+            p1=p1,
+            p2=p2,
+            elevation=attic_elev_m,
+            height=attic_knee_siding_height_m,
+            thickness=wall_furring_m,
+            direction_sense="NEGATIVE",  # outward
+            offset=-outward_offset,
+        )
+        outward_offset += wall_furring_m
+
+        metal = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Knee Exterior Standing Seam {i}",
+            p1=p1,
+            p2=p2,
+            elevation=attic_elev_m,
+            height=attic_knee_siding_height_m,
+            thickness=wall_metal_m,
+            direction_sense="NEGATIVE",  # outward
+            offset=-outward_offset,
+        )
+
+        attic_knee_layers["sheathing"].append(sheathing)
+        attic_knee_layers["studs"].append(studs)
+        attic_knee_layers["polyiso"].append(polyiso)
+        attic_knee_layers["eps"].append(eps)
+        attic_knee_layers["furring"].append(furring)
+        attic_knee_layers["metal"].append(metal)
+
+    assign_to_group(f, group=groups["Framing"], products=[*attic_knee_layers["studs"], *attic_knee_layers["sheathing"]])
+    assign_to_group(f, group=groups["Cladding"], products=[*attic_knee_layers["polyiso"], *attic_knee_layers["eps"], *attic_knee_layers["furring"], *attic_knee_layers["metal"]])
+    for elem in attic_knee_layers["studs"]:
+        assign_surface_style(f, element=elem, style=framing_wood_style)
+    for elem in attic_knee_layers["sheathing"]:
+        assign_surface_style(f, element=elem, style=sheathing_style)
+    for elem in attic_knee_layers["polyiso"]:
+        assign_surface_style(f, element=elem, style=polyiso_style)
+    for elem in attic_knee_layers["eps"]:
+        assign_surface_style(f, element=elem, style=eps_style)
+    for elem in attic_knee_layers["furring"]:
+        assign_surface_style(f, element=elem, style=framing_wood_style)
+    for elem in attic_knee_layers["metal"]:
+        assign_surface_style(f, element=elem, style=standing_seam_style)
 
     # Attic gable ends: build the same layer stack as prisms so siding continues to the ridge.
     knee_wall_h_m = ft(spec.attic_knee_wall_height_ft)
     ridge_h_m = ft(spec.attic_ridge_height_above_floor_ft)
-    gable_profile = [
+    gable_extra_h_m = ft(spec.attic_gable_extra_height_ft)
+    gable_siding_overlap_m = inch(spec.attic_gable_siding_overlap_in)
+    gable_knee_h_m = knee_wall_h_m + gable_extra_h_m
+    gable_ridge_h_m = ridge_h_m + gable_extra_h_m
+
+    gable_framing_profile = [
         (0.0, 0.0),
         (house_size_m, 0.0),
-        (house_size_m, -knee_wall_h_m),
-        (house_size_m / 2.0, -ridge_h_m),
-        (0.0, -knee_wall_h_m),
+        (house_size_m, -gable_knee_h_m),
+        (house_size_m / 2.0, -gable_ridge_h_m),
+        (0.0, -gable_knee_h_m),
+    ]
+    gable_siding_profile = [
+        (-gable_siding_overlap_m, 0.0),
+        (house_size_m + gable_siding_overlap_m, 0.0),
+        (house_size_m + gable_siding_overlap_m, -gable_knee_h_m),
+        (house_size_m / 2.0, -gable_ridge_h_m),
+        (-gable_siding_overlap_m, -gable_knee_h_m),
     ]
 
     def shifted_along_thickness(base_matrix: np.ndarray, dist_m: float) -> np.ndarray:
@@ -624,7 +778,7 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
                 storey=house_attic,
                 ifc_class="IfcWall",
                 name=f"House Attic {label} {name}",
-                profile_points=gable_profile,
+                profile_points=gable_siding_profile,
                 depth=float(thk),
                 placement_matrix=shifted_along_thickness(base_matrix, -outward_cum),
             )
@@ -638,17 +792,18 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
             storey=house_attic,
             ifc_class="IfcWall",
             name=f"House Attic {label} Exterior Sheathing",
-            profile_points=gable_profile,
+            profile_points=gable_siding_profile,
             depth=float(wall_sheathing_m),
             placement_matrix=base_matrix,
         )
+        assign_surface_style(f, element=sheathing, style=sheathing_style)
         studs = add_prism_from_profile(
             f,
             context=contexts.body,
             storey=house_attic,
             ifc_class="IfcWall",
             name=f"House Attic {label} Stud Wall",
-            profile_points=gable_profile,
+            profile_points=gable_framing_profile,
             depth=float(inch(3.5)),
             placement_matrix=shifted_along_thickness(base_matrix, float(wall_sheathing_m)),
         )
@@ -706,6 +861,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         ),
     ]
     assign_to_group(f, group=groups["Framing"], products=centerline_walls)
+    for wall in centerline_walls:
+        assign_surface_style(f, element=wall, style=framing_wood_style)
 
     # Floor joists (IFC framing members): 16" o.c. spanning between side walls and the centerline wall.
     spacing_m = inch(spec.framing_spacing_in)
@@ -918,6 +1075,18 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     # Assign a primary roof element for property sets
     house_roof = sheath_w
 
+    # Material styles for roof layers (sheathing/membranes/foam/furring).
+    for elem in [sheath_w, sheath_e]:
+        assign_surface_style(f, element=elem, style=sheathing_style)
+    for elem in [mem1_w, mem2_w, mem1_e, mem2_e]:
+        assign_surface_style(f, element=elem, style=membrane_style)
+    for elem in [poly_w, poly_e]:
+        assign_surface_style(f, element=elem, style=polyiso_style)
+    for elem in [eps_w, eps_e]:
+        assign_surface_style(f, element=elem, style=eps_style)
+    for elem in [furring_w, furring_e]:
+        assign_surface_style(f, element=elem, style=framing_wood_style)
+
     # Roof joists (IFC framing members): same spacing, 4:12 slope, spanning ridge to side walls.
     roof_joist_w_m = inch(spec.roof_joist_width_in)
     roof_joist_d_m = inch(spec.roof_joist_depth_in)
@@ -1058,6 +1227,10 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     ]
     assign_to_group(f, group=groups["Concrete"], products=garage_icf_walls)
     assign_to_group(f, group=groups["Framing"], products=garage_wood_walls)
+    for wall in garage_icf_walls:
+        assign_surface_style(f, element=wall, style=concrete_style)
+    for wall in garage_wood_walls:
+        assign_surface_style(f, element=wall, style=framing_wood_style)
 
     # Garage roof prism (placeholder).
     g_overhang_m = inch(spec.garage_overhang_in)

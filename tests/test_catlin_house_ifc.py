@@ -8,7 +8,7 @@ import ifcopenshell.util.placement
 import pytest
 
 from ifcplot.catlin_house import CatlinHouseSpec, build_catlin_house_ifc
-from ifcplot.units import ft
+from ifcplot.units import ft, inch
 
 
 def test_build_catlin_house_ifc_has_centerline_wall_and_joists(tmp_path) -> None:
@@ -149,8 +149,14 @@ def test_roof_and_gables_have_expected_absolute_placements(tmp_path) -> None:
     m_house = ifcopenshell.util.placement.get_local_placement(house_roof.ObjectPlacement)
     m_gable = ifcopenshell.util.placement.get_local_placement(gable.ObjectPlacement)
 
-    # Garage is offset 48' east of the house.
-    assert float(m_garage[0, 3]) == pytest.approx(ft(48.0) * 1000.0, abs=1e-6)
+    # Garage is offset 12' north of the house's north wall and aligned on the west wall.
+    # Roof starts at the west overhang (16") and extrudes east-west after the 90° rotation.
+    assert float(m_garage[0, 3]) == pytest.approx(-inch(CatlinHouseSpec().garage_overhang_in) * 1000.0, abs=1e-6)
+    spec = CatlinHouseSpec()
+    assert float(m_garage[1, 3]) == pytest.approx(ft(spec.house_size_ft + 12.0) * 1000.0, abs=1e-6)
+
+    z_axis = m_garage[:3, 2]
+    assert tuple(map(float, z_axis)) == pytest.approx((1.0, 0.0, 0.0), abs=1e-6)
     # House roof + gables are placed at the attic elevation (18').
     assert float(m_house[2, 3]) == pytest.approx(ft(18.0) * 1000.0, abs=1e-6)
     assert float(m_gable[2, 3]) == pytest.approx(ft(18.0) * 1000.0, abs=1e-6)

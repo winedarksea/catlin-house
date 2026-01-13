@@ -46,7 +46,12 @@ def hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
 @dataclass(frozen=True)
 class CatlinSitePlacement:
     house_origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
-    garage_origin_m: tuple[float, float, float] = (ft(48.0), ft(0.0), 0.0)  # placeholder
+    # If `(0,0,0)`, the garage is auto-placed relative to the house:
+    # - West wall aligned with house west wall
+    # - South wall 12' north of house north wall
+    garage_origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    # Plan rotation (deg) about the garage center (affects roof gable direction).
+    garage_rotation_deg: float = 90.0
     # The sunken garden + porch are currently defined relative to the house.
     porch_origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     breezeway_origin_m: tuple[float, float, float] = (ft(36.0), ft(6.0), 0.0)  # placeholder
@@ -253,6 +258,16 @@ def build_catlin_house_ifc(
     f, project, ifc_site, contexts = init_ifc_project(name="ifcPlot - Catlin House", schema="IFC4")
     groups = add_trade_groups(f)
 
+    house_size_m = ft(spec.house_size_ft)
+    house_origin_x, house_origin_y, _ = site.house_origin_m
+
+    # Auto-place the garage relative to the house if the site placement uses the sentinel `(0,0,0)`.
+    # - House footprint: x=[0..house_size], y=[0..house_size] in the current model
+    # - Garage south wall is 12' north of the house north wall
+    garage_origin = site.garage_origin_m
+    if garage_origin == (0.0, 0.0, 0.0):
+        garage_origin = (house_origin_x, house_origin_y + house_size_m + ft(12.0), 0.0)
+
     # ---- Materials and Styles --------------------------------------------------
     # Copy the standing-seam texture next to the exported IFC so viewers (e.g. Bonsai) can resolve it.
     texture_src = Path(__file__).parent / "textures" / "standing_seam_texture.png"
@@ -282,7 +297,7 @@ def build_catlin_house_ifc(
 
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
-    garage_bldg = add_building(f, site=ifc_site, name="Garage", origin=site.garage_origin_m)
+    garage_bldg = add_building(f, site=ifc_site, name="Garage", origin=garage_origin)
     porch_origin = site.porch_origin_m if site.porch_origin_m != (0.0, 0.0, 0.0) else site.house_origin_m
     porch_bldg = add_building(f, site=ifc_site, name="Porch + Sunken Garden", origin=porch_origin)
     breezeway_bldg = add_building(f, site=ifc_site, name="Breezeway (placeholder)", origin=site.breezeway_origin_m)
@@ -331,8 +346,8 @@ def build_catlin_house_ifc(
         building=garage_bldg,
         name="Garage Level",
         elevation=0.0,
-        global_xy=(site.garage_origin_m[0], site.garage_origin_m[1]),
-        global_z0=site.garage_origin_m[2],
+        global_xy=(garage_origin[0], garage_origin[1]),
+        global_z0=garage_origin[2],
     )
     porch_sunken = add_storey(
         f,
@@ -367,7 +382,6 @@ def build_catlin_house_ifc(
         global_z0=site.breezeway_origin_m[2],
     )
 
-    house_size_m = ft(spec.house_size_ft)
     grid_m = ft(spec.basement_grid_ft)
     stair_w_m = ft(spec.stair_opening_size_ft[0])
     stair_d_m = ft(spec.stair_opening_size_ft[1])
@@ -406,8 +420,6 @@ def build_catlin_house_ifc(
     set_pset_json(f, product=house_bldg, pset_name="Pset_ifcPlot_BasementPlan", prop_name="ParamsJSON", value=plan_params)
 
     # ---- Geometry --------------------------------------------------------------
-    house_origin_x, house_origin_y, _ = site.house_origin_m
-
     def hx(x: float) -> float:
         return house_origin_x + float(x)
 
@@ -1863,13 +1875,34 @@ def build_catlin_house_ifc(
 
     # ---- Garage shell ----------------------------------------------------------
     garage_size_m = ft(spec.garage_size_ft)
-    gx0, gy0, _ = site.garage_origin_m
+    gx0, gy0, _ = garage_origin
 
-    def gx(x: float) -> float:
-        return gx0 + float(x)
+    rot_deg = float(site.garage_rotation_deg) % 360.0
+    if rot_deg not in (0.0, 90.0, 180.0, 270.0):
+        raise ValueError("CatlinSitePlacement.garage_rotation_deg must be a multiple of 90 degrees for now")
+    c_m = garage_size_m / 2.0
 
-    def gy(y: float) -> float:
-        return gy0 + float(y)
+    def _rot_xy(x: float, y: float) -> tuple[float, float]:
+        # Rotate about the garage center (keeps extents stable and aligns with roof logic).
+        dx = float(x) - c_m
+        dy = float(y) - c_m
+        if rot_deg == 0.0:
+            rx, ry = dx, dy
+        elif rot_deg == 90.0:
+            rx, ry = -dy, dx
+        elif rot_deg == 180.0:
+            rx, ry = -dx, -dy
+        else:  # 270
+            rx, ry = dy, -dx
+        return (c_m + rx, c_m + ry)
+
+    def gxy(x: float, y: float) -> tuple[float, float]:
+        xr, yr = _rot_xy(x, y)
+        return (gx0 + xr, gy0 + yr)
+
+    def _rect_polyline_garage(x0_m: float, y0_m: float, w_m: float, h_m: float) -> list[tuple[float, float]]:
+        pts = _rect_polyline_xy((x0_m, y0_m), (w_m, h_m))
+        return [gxy(x, y) for x, y in pts]
 
     garage_icf = ICFFoundationAssembly(
         core_in=GARAGE_ICF.core_in,
@@ -1890,10 +1923,10 @@ def build_catlin_house_ifc(
     garage_wall = GARAGE_WALL
 
     garage_perim = [
-        ((gx(0.0), gy(0.0)), (gx(garage_size_m), gy(0.0))),
-        ((gx(garage_size_m), gy(0.0)), (gx(garage_size_m), gy(garage_size_m))),
-        ((gx(garage_size_m), gy(garage_size_m)), (gx(0.0), gy(garage_size_m))),
-        ((gx(0.0), gy(garage_size_m)), (gx(0.0), gy(0.0))),
+        (gxy(0.0, 0.0), gxy(garage_size_m, 0.0)),
+        (gxy(garage_size_m, 0.0), gxy(garage_size_m, garage_size_m)),
+        (gxy(garage_size_m, garage_size_m), gxy(0.0, garage_size_m)),
+        (gxy(0.0, garage_size_m), gxy(0.0, 0.0)),
     ]
     # ICF stem wall (includes below-grade portion down to frost depth).
     icf_elev_m = -icf_below_grade_m
@@ -1961,7 +1994,7 @@ def build_catlin_house_ifc(
         context=contexts.body,
         storey=garage_level,
         name="Garage Floor Slab",
-        polyline=_rect_polyline_xy((gx(icf_total_thk_m), gy(icf_total_thk_m)), (slab_inner_size_m, slab_inner_size_m)),
+        polyline=_rect_polyline_garage(icf_total_thk_m, icf_total_thk_m, slab_inner_size_m, slab_inner_size_m),
         elevation=-garage_slab_thk_m,  # top of slab at grade (Z=0)
         depth=garage_slab_thk_m,
         predefined_type="FLOOR",
@@ -2086,11 +2119,20 @@ def build_catlin_house_ifc(
     g_roof_depth_m = garage_size_m + 2.0 * g_overhang_m
 
     g_roof_matrix = np.eye(4, dtype=float)
-    g_roof_matrix[0:3, 0] = (1.0, 0.0, 0.0)   # local X -> world +X (east-west)
-    g_roof_matrix[0:3, 1] = (0.0, 0.0, 1.0)   # local Y -> world +Z (up)
-    g_roof_matrix[0:3, 2] = (0.0, -1.0, 0.0)  # local Z (extrusion) -> world -Y (south)
-    # Relative to Garage Level (Elev 0)
-    g_roof_matrix[0:3, 3] = (0.0, garage_size_m + g_overhang_m, float(g_z0))
+    # Start from the unrotated basis and apply the same plan rotation used for the garage footprint.
+    def _rot_vec_xy(v: tuple[float, float, float]) -> tuple[float, float, float]:
+        x, y, z = (float(v[0]), float(v[1]), float(v[2]))
+        xr, yr = _rot_xy(x + c_m, y + c_m)  # hack: reuse _rot_xy expecting absolute-in-garage coords
+        # _rot_xy returns coords rotated about center; subtract the center back out.
+        return (xr - c_m, yr - c_m, z)
+
+    g_roof_matrix[0:3, 0] = _rot_vec_xy((1.0, 0.0, 0.0))  # profile X direction
+    g_roof_matrix[0:3, 1] = (0.0, 0.0, 1.0)               # profile Y direction (up)
+    g_roof_matrix[0:3, 2] = _rot_vec_xy((0.0, -1.0, 0.0)) # extrusion direction
+
+    # Rotate the original reference point (0, size+overhang) about the center so overhangs stay correct.
+    x_ref, y_ref = _rot_xy(0.0, garage_size_m + g_overhang_m)
+    g_roof_matrix[0:3, 3] = (gx0 + float(x_ref), gy0 + float(y_ref), float(g_z0))
 
     garage_roof = add_prism_from_profile(
         f,
@@ -2101,6 +2143,7 @@ def build_catlin_house_ifc(
         profile_points=g_roof_profile,
         depth=g_roof_depth_m,
         placement_matrix=g_roof_matrix,
+        placement_is_storey_relative=False,
         predefined_type="GABLE_ROOF",
     )
     assign_to_group(f, group=groups["Framing"], products=[garage_roof])

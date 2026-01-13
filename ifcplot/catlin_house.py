@@ -1695,8 +1695,9 @@ def build_catlin_house_ifc(
 
     # North face (toward house): thickness extrudes south into the porch box.
     north_wall_base = placement_matrix(
-        origin=(hx(x_out0_m), hy(y_north_out_m), float(sg_floor_top_m)),
-        x_axis=(1.0, 0.0, 0.0),
+        # Flip X so the profile's "up" direction matches the south wall (prevents inverted arches).
+        origin=(hx(x_out1_m), hy(y_north_out_m), float(sg_floor_top_m)),
+        x_axis=(-1.0, 0.0, 0.0),
         z_axis=(0.0, -1.0, 0.0),
     )
     south_wall_base = placement_matrix(
@@ -1833,7 +1834,6 @@ def build_catlin_house_ifc(
     rail_segments = [
         ("Deck Railing South", (deck_corners["x0"], deck_corners["y0"]), (deck_corners["x1"], deck_corners["y0"])),
         ("Deck Railing East", (deck_corners["x1"], deck_corners["y0"]), (deck_corners["x1"], deck_corners["y1"])),
-        ("Deck Railing North", (deck_corners["x1"], deck_corners["y1"]), (deck_corners["x0"], deck_corners["y1"])),
         ("Deck Railing West", (deck_corners["x0"], deck_corners["y1"]), (deck_corners["x0"], deck_corners["y0"])),
     ]
     for name, p1, p2 in rail_segments:

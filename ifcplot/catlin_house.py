@@ -154,6 +154,7 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     sheathing_style = create_surface_style_shading(f, name="Sheathing/OSB", rgb=hex_to_rgb(MATERIAL_COLORS["sheathing"]))
     polyiso_style = create_surface_style_shading(f, name="Polyiso", rgb=hex_to_rgb(MATERIAL_COLORS["polyiso"]))
     eps_style = create_surface_style_shading(f, name="EPS", rgb=hex_to_rgb(MATERIAL_COLORS["eps"]))
+    xps_style = create_surface_style_shading(f, name="XPS", rgb=hex_to_rgb(MATERIAL_COLORS["xps"]))
     membrane_style = create_surface_style_shading(f, name="Membrane", rgb=hex_to_rgb(MATERIAL_COLORS["membrane"]))
     framing_wood_style = create_surface_style_shading(f, name="Framing Wood", rgb=hex_to_rgb(MATERIAL_COLORS["wood"]))
     metal_dark_style = create_surface_style_shading(f, name="Metal (Dark)", rgb=hex_to_rgb(MATERIAL_COLORS["metal_dark"]))
@@ -304,6 +305,34 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         )
         for i, (p1, p2) in enumerate(perim)
     ]
+
+    # Basement exterior insulation: 4" XPS in 2 layers, over the exterior face of perimeter concrete walls.
+    # Represented as separate IfcWall elements so they can be hidden/isolated similar to other envelope layers.
+    basement_xps_layer_in = 2.0
+    basement_xps_layers = 2
+    basement_xps_layer_m = inch(basement_xps_layer_in)
+    basement_xps_walls: list[Any] = []
+    for i, (p1, p2) in enumerate(perim, start=1):
+        outward_offset = 0.0
+        for layer in range(1, basement_xps_layers + 1):
+            xps = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=house_basement,
+                name=f"House Basement Exterior XPS L{layer} {i}",
+                p1=p1,
+                p2=p2,
+                elevation=basement_elev_m,
+                height=ft(spec.basement_clear_height_ft),
+                thickness=basement_xps_layer_m,
+                direction_sense="NEGATIVE",  # outward (exterior)
+                offset=-outward_offset,  # stack layers outward from the concrete exterior face
+            )
+            basement_xps_walls.append(xps)
+            outward_offset += basement_xps_layer_m
+    assign_to_group(f, group=groups["Cladding"], products=basement_xps_walls)
+    for xps in basement_xps_walls:
+        assign_surface_style(f, element=xps, style=xps_style)
 
     # Center cross walls (concrete), splitting basement into four squares.
     basement_walls.append(

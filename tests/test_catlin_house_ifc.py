@@ -114,12 +114,26 @@ def test_house_elements_have_surface_styles(tmp_path) -> None:
 
     # Ensure we export multiple named surface styles (not just the wood framing).
     style_names = {s.Name for s in f.by_type("IfcSurfaceStyle") if s.Name}
-    assert {"Concrete", "Sheathing/OSB", "Polyiso", "EPS", "Membrane", "Framing Wood", "Standing Seam Metal"} <= style_names
+    assert {"Concrete", "Sheathing/OSB", "Polyiso", "EPS", "XPS", "Membrane", "Framing Wood", "Standing Seam Metal"} <= style_names
 
     # Spot-check that representative elements actually reference a surface style (Bonsai otherwise shows default gray).
     sheathing = next(w for w in f.by_type("IfcWall") if w.Name == "House Main Exterior Sheathing 1")
     item = sheathing.Representation.Representations[0].Items[0]
     assert item.StyledByItem
+
+    xps = next(w for w in f.by_type("IfcWall") if w.Name and w.Name.startswith("House Basement Exterior XPS L1"))
+    xps_item = xps.Representation.Representations[0].Items[0]
+    assert xps_item.StyledByItem
+
+
+def test_house_has_basement_exterior_xps_layers(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    xps_walls = [w for w in f.by_type("IfcWall") if w.Name and w.Name.startswith("House Basement Exterior XPS")]
+    # 4 perimeter segments, 2 layers each.
+    assert len(xps_walls) == 8
 
 
 def test_roof_and_gables_have_expected_absolute_placements(tmp_path) -> None:

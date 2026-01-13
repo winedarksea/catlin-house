@@ -281,6 +281,69 @@ def add_prism_from_profile(
     return element
 
 
+def add_prism_from_profile_with_voids(
+    f: "ifcopenshell.file",
+    *,
+    context: Any,
+    storey: Any,
+    ifc_class: str,
+    name: str,
+    outer_profile_points: list[tuple[float, float]],
+    inner_profile_points: list[list[tuple[float, float]]],
+    depth: float,
+    placement_matrix: np.ndarray,
+    placement_is_storey_relative: bool = True,
+    element_type: Optional[Any] = None,
+    predefined_type: Optional[str] = None,
+) -> Any:
+    element = ifcopenshell.api.run(
+        "root.create_entity",
+        f,
+        ifc_class=ifc_class,
+        predefined_type=predefined_type,
+        name=name,
+    )
+    ifcopenshell.api.run("spatial.assign_container", f, products=[element], relating_structure=storey)
+
+    def closed(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        if not pts:
+            raise ValueError("Profile must have at least one point")
+        if pts[0] == pts[-1]:
+            return pts
+        return [*pts, pts[0]]
+
+    outer = closed(outer_profile_points)
+    inners = [closed(p) for p in inner_profile_points]
+
+    profile = ifcopenshell.api.run(
+        "profile.add_arbitrary_profile_with_voids",
+        f,
+        outer_profile=outer,
+        inner_profiles=inners,
+        name=name,
+    )
+    representation = ifcopenshell.api.run(
+        "geometry.add_profile_representation",
+        f,
+        context=context,
+        profile=profile,
+        depth=float(depth),
+    )
+    ifcopenshell.api.run("geometry.assign_representation", f, product=element, representation=representation)
+
+    matrix = placement_matrix
+    if placement_is_storey_relative and getattr(storey, "ObjectPlacement", None):
+        unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)
+        storey_matrix = ifcopenshell.util.placement.get_local_placement(storey.ObjectPlacement).copy()
+        storey_matrix[0:3, 3] *= float(unit_scale)
+        matrix = storey_matrix @ placement_matrix
+
+    ifcopenshell.api.run("geometry.edit_object_placement", f, product=element, matrix=matrix)
+    if element_type is not None:
+        ifcopenshell.api.run("type.assign_type", f, related_objects=[element], relating_type=element_type)
+    return element
+
+
 def add_rect_member_between_points(
     f: "ifcopenshell.file",
     *,

@@ -1,5 +1,6 @@
 # Project Design Goals and Guidelines
 * The name for this project will be `ifcPlot`
+* This is an "infrastructure as code" project, a "house as code"
 * Design  around IFC files and interact with them mostly from python in Visual Studio Code. IFC should be used so that this could be loaded into other major programs easily, such as Revit or ArchCAD.
 * Use ifcopenshell to process the IFC files, ifctester to help validate the structure, and Bonsai BIM for 3d visualization (some users might use Bonsai to modify IFC details, but primarily it is intended in the stack just for visualization). For 2d details (wall and floorplan), plan to use matplotlib where possible.
 * Uses adjustText or textalloc for matplotlib labels to improve layout.
@@ -53,3 +54,7 @@ As a result of the opening for the stairs, a set of smaller load bearing walls i
 The garage is 24' by 24' (again, measured at sheathing, for minimal sheathing cuts when using 8' by 4' sheathing) and has an 8' height wood stud wall on 22" of above grade ICF. See attached garage detail for full design parameters. The garage is 12' north of the house, and the house's west wall is aligned with the garage's west wall.
 
 One interior room that is well defined with unique details is the sauna and attached shower. This is located in the basement and has a small area of recessed slab for the shower (4" lower than main basement slab, but otherwise similar slab details). This located on the west side of the centerline wall in the basement, up against the south side wall, with a door to it through the centerline concrete wall.
+
+The sunken garden is 18' clear span wide (east to west) and 28' feet long (north to south). It is centered on the south side of the house and starts 5" south of the house concrete foundation wall (a small gap which is mostly filled with the house's exterior insulation and furring strips). The sunken garden is a "T" shaped cantilever wall. This T footing's top is at the same lever as the house's basement floor slab top level. In fact the sunken garden at a glance looks like a basement foundation wall without any structure over it (well, except the porch and balcony, we will get to that).
+
+On the 8 feet of the sunken garden closest to the house there is a porch/balcony structure. This is two stories tall, so here the concrete retaining wall rises to 20 feet tall. The concrete structure is a box with arches/beams on the north and south sides. Starting at the 9' mark there is the first level of this, which has 2x8 beams across the 8' span, then a floor on those, this makes the porch. 10' above that is the second story, which is a flat roof to the porch and a deck (walk out from the house second story). This is framed similarly to the porch below (2x8s) but has a 1/4" per 12" slope (2 way slope towards down and to sides) towards the two outer corners facing the sunken garden. There is a 36" high railing around it.

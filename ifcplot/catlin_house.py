@@ -18,6 +18,7 @@ from ifcplot.assemblies import GARAGE_ICF, GARAGE_WALL, ICFFoundationAssembly
 from ifcplot.ifc_utils import (
     add_building,
     add_prism_from_profile,
+    add_prism_from_profile_with_voids,
     add_rect_member_between_points,
     add_slab,
     add_storey,
@@ -46,7 +47,8 @@ def hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
 class CatlinSitePlacement:
     house_origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     garage_origin_m: tuple[float, float, float] = (ft(48.0), ft(0.0), 0.0)  # placeholder
-    porch_origin_m: tuple[float, float, float] = (ft(-40.0), ft(-40.0), 0.0)  # placeholder
+    # The sunken garden + porch are currently defined relative to the house.
+    porch_origin_m: tuple[float, float, float] = (0.0, 0.0, 0.0)
     breezeway_origin_m: tuple[float, float, float] = (ft(36.0), ft(6.0), 0.0)  # placeholder
 
 
@@ -92,6 +94,38 @@ class CatlinHouseSpec:
     stair_opening_size_ft: tuple[float, float] = (7.0, 9.0 + 8.0 / 12.0)  # (E-W, N-S)
 
 
+@dataclass(frozen=True)
+class SunkenGardenSpec:
+    clear_width_ft: float = 18.0  # east-west, between wall inner faces
+    clear_length_ft: float = 28.0  # north-south, between wall inner faces
+    porch_clear_depth_ft: float = 8.0  # north-south, between porch wall inner faces
+
+    gap_to_house_in: float = 5.0  # gap between house south wall and sunken garden north wall (outer face)
+
+    wall_thickness_in: float = 12.0
+
+    footing_thickness_in: float = 12.0
+    footing_toe_in: float = 36.0  # interior side
+    footing_heel_in: float = 36.0  # exterior side (clamped at the house-side wall)
+
+    aggregate_thickness_in: float = 18.0
+    aggregate_extra_in: float = 6.0
+
+    porch_joist_width_in: float = 1.5  # 2x lumber thickness
+    porch_joist_depth_in: float = 7.25  # 2x8 actual
+    porch_joist_spacing_in: float = 16.0
+    deck_thickness_in: float = 1.5  # schematic deck/sheathing thickness
+
+    railing_height_in: float = 36.0
+    railing_thickness_in: float = 2.0
+
+    # Arch parameters (for the two-story concrete porch box, north + south faces)
+    arches_per_wall: int = 2
+    arch_clear_width_ft: float = 8.0
+    arch_outer_pier_ft: float = 1.0
+    arch_opening_height_ft: float = 8.0
+
+
 def _flip_profile_y(profile_points: list[tuple[float, float]]) -> list[tuple[float, float]]:
     return [tuple((p[0], -p[1])) for p in profile_points]
 
@@ -100,6 +134,78 @@ def _rect_polyline_xy(origin_xy: tuple[float, float], size_xy: tuple[float, floa
     x0, y0 = origin_xy
     w, h = size_xy
     return [(x0, y0), (x0 + w, y0), (x0 + w, y0 + h), (x0, y0 + h), (x0, y0)]
+
+
+def _arch_void_profile_points(
+    *,
+    x_left: float,
+    x_right: float,
+    opening_height: float,
+    segments: int = 48,
+) -> list[tuple[float, float]]:
+    """
+    Return a closed polyline for an arched opening (rect + semicircle).
+
+    Local coordinates assume:
+    - X is horizontal.
+    - Y is vertical, with negative values "up" (matches existing gable profiles).
+    - Opening base is at y=0.
+    """
+    w = float(x_right - x_left)
+    if w <= 0:
+        raise ValueError("Arch opening must have positive width")
+    r = w / 2.0
+    if opening_height < r:
+        raise ValueError("Arch opening height must be >= half the opening width")
+
+    spring_height = float(opening_height - r)
+    spring_y = -spring_height
+    cx = float((x_left + x_right) / 2.0)
+    cy = float(spring_y)
+
+    thetas = np.linspace(np.pi, 0.0, int(segments))
+    pts: list[tuple[float, float]] = [(float(x_left), 0.0), (float(x_left), spring_y)]
+    for t in thetas:
+        pts.append((cx + r * float(np.cos(t)), cy - r * float(np.sin(t))))
+    pts.extend([(float(x_right), 0.0), (float(x_left), 0.0)])
+    return pts
+
+
+def _arch_voids_for_wall(
+    *,
+    wall_width: float,
+    opening_height: float,
+    n_arches: int,
+    arch_width: float,
+    outer_pier: float,
+) -> list[list[tuple[float, float]]]:
+    """Compute a list of arched opening polylines for a wall face."""
+    if n_arches < 1:
+        return []
+    if wall_width <= 0 or arch_width <= 0:
+        raise ValueError("Wall width and arch width must be positive")
+    if outer_pier < 0:
+        raise ValueError("outer_pier must be >= 0")
+
+    middle_length = wall_width - 2.0 * outer_pier
+    arches_total = n_arches * arch_width
+    interior_piers_count = max(n_arches - 1, 0)
+    remaining_for_interior = middle_length - arches_total
+    if remaining_for_interior < -1e-9:
+        raise ValueError("Arches + outer piers exceed wall width")
+
+    pier = (remaining_for_interior / interior_piers_count) if interior_piers_count > 0 else 0.0
+
+    voids: list[list[tuple[float, float]]] = []
+    x = float(outer_pier)
+    for i in range(n_arches):
+        x_left = x
+        x_right = x + arch_width
+        voids.append(_arch_void_profile_points(x_left=x_left, x_right=x_right, opening_height=opening_height))
+        x = x_right
+        if i < n_arches - 1:
+            x += pier
+    return voids
 
 
 def _offset_segment(p0, p1, offset):
@@ -133,9 +239,16 @@ def _layer_poly(mid0, mid1, center_offset, thickness, x0, x1):
 
 
 
-def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None = None, spec: CatlinHouseSpec | None = None) -> Any:
+def build_catlin_house_ifc(
+    *,
+    out_path: Path,
+    site: CatlinSitePlacement | None = None,
+    spec: CatlinHouseSpec | None = None,
+    sunken_garden_spec: SunkenGardenSpec | None = None,
+) -> Any:
     site = site or CatlinSitePlacement()
     spec = spec or CatlinHouseSpec()
+    sunken = sunken_garden_spec or SunkenGardenSpec()
 
     f, project, ifc_site, contexts = init_ifc_project(name="ifcPlot - Catlin House", schema="IFC4")
     groups = add_trade_groups(f)
@@ -150,6 +263,7 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         shutil.copy2(texture_src, texture_dst)
 
     concrete_style = create_surface_style_shading(f, name="Concrete", rgb=hex_to_rgb(MATERIAL_COLORS["concrete"]))
+    aggregate_style = create_surface_style_shading(f, name="Aggregate", rgb=hex_to_rgb(MATERIAL_COLORS["aggregate"]))
     drywall_style = create_surface_style_shading(f, name="Drywall", rgb=hex_to_rgb(MATERIAL_COLORS["drywall"]))
     sheathing_style = create_surface_style_shading(f, name="Sheathing/OSB", rgb=hex_to_rgb(MATERIAL_COLORS["sheathing"]))
     polyiso_style = create_surface_style_shading(f, name="Polyiso", rgb=hex_to_rgb(MATERIAL_COLORS["polyiso"]))
@@ -169,7 +283,8 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
     garage_bldg = add_building(f, site=ifc_site, name="Garage", origin=site.garage_origin_m)
-    porch_bldg = add_building(f, site=ifc_site, name="Porch + Sunken Garden (placeholder)", origin=site.porch_origin_m)
+    porch_origin = site.porch_origin_m if site.porch_origin_m != (0.0, 0.0, 0.0) else site.house_origin_m
+    porch_bldg = add_building(f, site=ifc_site, name="Porch + Sunken Garden", origin=porch_origin)
     breezeway_bldg = add_building(f, site=ifc_site, name="Breezeway (placeholder)", origin=site.breezeway_origin_m)
 
     # Storeys (elevations are global Z)
@@ -219,13 +334,29 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         global_xy=(site.garage_origin_m[0], site.garage_origin_m[1]),
         global_z0=site.garage_origin_m[2],
     )
-    add_storey(
+    porch_sunken = add_storey(
         f,
         building=porch_bldg,
-        name="Level 0",
-        elevation=0.0,
-        global_xy=(site.porch_origin_m[0], site.porch_origin_m[1]),
-        global_z0=site.porch_origin_m[2],
+        name="Sunken Garden Floor",
+        elevation=basement_elev_m + inch(spec.basement_slab_thickness_in),
+        global_xy=(porch_origin[0], porch_origin[1]),
+        global_z0=porch_origin[2],
+    )
+    porch_main = add_storey(
+        f,
+        building=porch_bldg,
+        name="Porch Floor",
+        elevation=main_elev_m,
+        global_xy=(porch_origin[0], porch_origin[1]),
+        global_z0=porch_origin[2],
+    )
+    porch_deck = add_storey(
+        f,
+        building=porch_bldg,
+        name="Deck Floor",
+        elevation=second_elev_m,
+        global_xy=(porch_origin[0], porch_origin[1]),
+        global_z0=porch_origin[2],
     )
     add_storey(
         f,
@@ -1307,6 +1438,428 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
         "roof_joists": {"width_in": spec.roof_joist_width_in, "depth_in": spec.roof_joist_depth_in, "pitch_rise_over_run": pitch},
     }
     set_pset_json(f, product=house_bldg, pset_name="Pset_ifcPlot_HouseFraming", prop_name="ParamsJSON", value=framing_params)
+
+    # ---- Sunken Garden + Porch/Deck (WIP) ------------------------------------
+    # Model is intentionally parameterized (SunkenGardenSpec) to keep iteration easy.
+    sg_clear_w_m = ft(sunken.clear_width_ft)
+    sg_clear_l_m = ft(sunken.clear_length_ft)
+    porch_clear_d_m = ft(sunken.porch_clear_depth_ft)
+    sg_gap_m = inch(sunken.gap_to_house_in)
+
+    sg_wall_thk_m = inch(sunken.wall_thickness_in)
+
+    sg_footing_thk_m = inch(sunken.footing_thickness_in)
+    sg_toe_m = inch(sunken.footing_toe_in)
+    sg_heel_m = inch(sunken.footing_heel_in)
+    # The house-side wall has only a ~5" gap, so clamp the heel there to avoid running under the house.
+    sg_heel_house_side_m = min(sg_heel_m, sg_gap_m)
+
+    sg_agg_thk_m = inch(sunken.aggregate_thickness_in)
+    sg_agg_extra_m = inch(sunken.aggregate_extra_in)
+
+    deck_thk_m = inch(sunken.deck_thickness_in)
+    rail_h_m = inch(sunken.railing_height_in)
+    rail_thk_m = inch(sunken.railing_thickness_in)
+
+    # Reference elevations (global Z)
+    sg_floor_top_m = basement_elev_m + inch(spec.basement_slab_thickness_in)  # top of T footing
+    porch_floor_top_m = main_elev_m  # align with house main storey
+    deck_floor_top_m = second_elev_m  # align with house second storey
+
+    # Wall heights
+    sg_retaining_h_m = porch_floor_top_m - sg_floor_top_m
+    sg_box_h_m = deck_floor_top_m - sg_floor_top_m
+    if sg_retaining_h_m <= 0:
+        raise ValueError("Sunken garden retaining wall height must be positive")
+    if sg_box_h_m <= 0:
+        raise ValueError("Sunken garden porch box height must be positive")
+
+    # Plan layout: centered on house south side.
+    x_center_m = house_size_m / 2.0
+    x_in0_m = x_center_m - sg_clear_w_m / 2.0
+    x_in1_m = x_center_m + sg_clear_w_m / 2.0
+    x_out0_m = x_in0_m - sg_wall_thk_m
+    x_out1_m = x_in1_m + sg_wall_thk_m
+
+    y_north_out_m = -sg_gap_m
+    y_north_in_m = y_north_out_m - sg_wall_thk_m
+    y_south_in_m = y_north_in_m - sg_clear_l_m
+    y_south_out_m = y_south_in_m - sg_wall_thk_m
+
+    # Porch box (two-story) occupies the first `porch_clear_d_m` of the sunken garden length.
+    y_box_south_in_m = y_north_in_m - porch_clear_d_m
+    y_box_south_out_m = y_box_south_in_m - sg_wall_thk_m
+
+    # Store parameters on the porch building for future detail scripts.
+    set_pset_json(
+        f,
+        product=porch_bldg,
+        pset_name="Pset_ifcPlot_SunkenGarden",
+        prop_name="ParamsJSON",
+        value={
+            "clear_width_m": sg_clear_w_m,
+            "clear_length_m": sg_clear_l_m,
+            "porch_clear_depth_m": porch_clear_d_m,
+            "gap_to_house_m": sg_gap_m,
+            "wall_thickness_m": sg_wall_thk_m,
+            "elevations_m": {
+                "t_footing_top_m": sg_floor_top_m,
+                "porch_floor_m": porch_floor_top_m,
+                "deck_floor_m": deck_floor_top_m,
+            },
+            "footing_m": {
+                "thickness_m": sg_footing_thk_m,
+                "toe_m": sg_toe_m,
+                "heel_m": sg_heel_m,
+                "heel_house_side_m": sg_heel_house_side_m,
+            },
+            "aggregate_m": {"thickness_m": sg_agg_thk_m, "extra_m": sg_agg_extra_m},
+            "arches": {
+                "arches_per_wall": sunken.arches_per_wall,
+                "arch_clear_width_m": ft(sunken.arch_clear_width_ft),
+                "arch_outer_pier_m": ft(sunken.arch_outer_pier_ft),
+                "arch_opening_height_m": ft(sunken.arch_opening_height_ft),
+            },
+        },
+    )
+
+    sg_concrete: list[Any] = []
+    sg_aggregate: list[Any] = []
+    sg_framing: list[Any] = []
+
+    def _add_footing_and_aggregate(*, name: str, x0_m: float, y0_m: float, w_m: float, h_m: float) -> None:
+        if w_m <= 0 or h_m <= 0:
+            raise ValueError(f"Invalid footing footprint for {name}")
+
+        agg = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=porch_sunken,
+            ifc_class="IfcBuildingElementProxy",
+            name=f"{name} Compacted Aggregate",
+            profile_points=_rect_polyline_xy((0.0, 0.0), (w_m + 2.0 * sg_agg_extra_m, h_m + 2.0 * sg_agg_extra_m)),
+            depth=sg_agg_thk_m,
+            placement_matrix=translation_matrix(
+                hx(x0_m - sg_agg_extra_m),
+                hy(y0_m - sg_agg_extra_m),
+                sg_floor_top_m - sg_footing_thk_m - sg_agg_thk_m,
+            ),
+            placement_is_storey_relative=False,
+        )
+        sg_aggregate.append(agg)
+
+        footing = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=porch_sunken,
+            ifc_class="IfcFooting",
+            name=f"{name} Footing",
+            profile_points=_rect_polyline_xy((0.0, 0.0), (w_m, h_m)),
+            depth=sg_footing_thk_m,
+            placement_matrix=translation_matrix(
+                hx(x0_m),
+                hy(y0_m),
+                sg_floor_top_m - sg_footing_thk_m,
+            ),
+            placement_is_storey_relative=False,
+            predefined_type="STRIP_FOOTING",
+        )
+        sg_concrete.append(footing)
+
+    # Footings (plan rectangles), derived from the retaining wall detail script.
+    # North wall (house-side) footing: clamp heel to avoid running under the house.
+    _add_footing_and_aggregate(
+        name="Sunken Garden North Wall",
+        x0_m=x_out0_m,
+        y0_m=y_north_in_m - sg_toe_m,
+        w_m=x_out1_m - x_out0_m,
+        h_m=(y_north_out_m + sg_heel_house_side_m) - (y_north_in_m - sg_toe_m),
+    )
+    _add_footing_and_aggregate(
+        name="Sunken Garden South Wall",
+        x0_m=x_out0_m,
+        y0_m=y_south_out_m - sg_heel_m,
+        w_m=x_out1_m - x_out0_m,
+        h_m=(y_south_in_m + sg_toe_m) - (y_south_out_m - sg_heel_m),
+    )
+    _add_footing_and_aggregate(
+        name="Sunken Garden West Wall",
+        x0_m=x_out0_m - sg_heel_m,
+        y0_m=y_south_out_m,
+        w_m=(x_in0_m + sg_toe_m) - (x_out0_m - sg_heel_m),
+        h_m=y_north_out_m - y_south_out_m,
+    )
+    _add_footing_and_aggregate(
+        name="Sunken Garden East Wall",
+        x0_m=x_in1_m - sg_toe_m,
+        y0_m=y_south_out_m,
+        w_m=(x_out1_m + sg_heel_m) - (x_in1_m - sg_toe_m),
+        h_m=y_north_out_m - y_south_out_m,
+    )
+
+    # ---- Retaining walls + porch box walls -----------------------------------
+    def _add_wall_prism(
+        *,
+        name: str,
+        x0_m: float,
+        y0_m: float,
+        w_m: float,
+        h_m: float,
+        z0_m: float,
+        height_m: float,
+    ) -> Any:
+        wall = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=porch_sunken,
+            ifc_class="IfcWall",
+            name=name,
+            profile_points=_rect_polyline_xy((0.0, 0.0), (w_m, h_m)),
+            depth=height_m,
+            placement_matrix=translation_matrix(hx(x0_m), hy(y0_m), z0_m),
+            placement_is_storey_relative=False,
+        )
+        sg_concrete.append(wall)
+        return wall
+
+    # Side walls: split into a tall (porch box) segment + short (open sunken) segment.
+    _add_wall_prism(
+        name="Sunken Garden West Wall (Open Zone)",
+        x0_m=x_out0_m,
+        y0_m=y_south_out_m,
+        w_m=sg_wall_thk_m,
+        h_m=y_box_south_out_m - y_south_out_m,
+        z0_m=sg_floor_top_m,
+        height_m=sg_retaining_h_m,
+    )
+    _add_wall_prism(
+        name="Sunken Garden West Wall (Porch Box)",
+        x0_m=x_out0_m,
+        y0_m=y_box_south_out_m,
+        w_m=sg_wall_thk_m,
+        h_m=y_north_out_m - y_box_south_out_m,
+        z0_m=sg_floor_top_m,
+        height_m=sg_box_h_m,
+    )
+    _add_wall_prism(
+        name="Sunken Garden East Wall (Open Zone)",
+        x0_m=x_in1_m,
+        y0_m=y_south_out_m,
+        w_m=sg_wall_thk_m,
+        h_m=y_box_south_out_m - y_south_out_m,
+        z0_m=sg_floor_top_m,
+        height_m=sg_retaining_h_m,
+    )
+    _add_wall_prism(
+        name="Sunken Garden East Wall (Porch Box)",
+        x0_m=x_in1_m,
+        y0_m=y_box_south_out_m,
+        w_m=sg_wall_thk_m,
+        h_m=y_north_out_m - y_box_south_out_m,
+        z0_m=sg_floor_top_m,
+        height_m=sg_box_h_m,
+    )
+
+    # Far south retaining wall (end of sunken garden).
+    _add_wall_prism(
+        name="Sunken Garden South Wall (Retaining)",
+        x0_m=x_out0_m,
+        y0_m=y_south_out_m,
+        w_m=x_out1_m - x_out0_m,
+        h_m=sg_wall_thk_m,
+        z0_m=sg_floor_top_m,
+        height_m=sg_retaining_h_m,
+    )
+
+    # Porch box arch walls (north + south faces), split into a lower + upper segment.
+    arch_wall_w_m = sg_clear_w_m + 2.0 * sg_wall_thk_m
+    n_arches = int(sunken.arches_per_wall)
+    arch_w_m = ft(sunken.arch_clear_width_ft)
+    arch_outer_pier_m = ft(sunken.arch_outer_pier_ft)
+    arch_open_h_m = ft(sunken.arch_opening_height_ft)
+
+    lower_h_m = sg_retaining_h_m
+    upper_h_m = deck_floor_top_m - porch_floor_top_m
+    if arch_open_h_m > lower_h_m or arch_open_h_m > upper_h_m:
+        raise ValueError("Arch opening height exceeds wall segment height")
+
+    outer_lower = [(0.0, 0.0), (arch_wall_w_m, 0.0), (arch_wall_w_m, -lower_h_m), (0.0, -lower_h_m), (0.0, 0.0)]
+    outer_upper = [(0.0, 0.0), (arch_wall_w_m, 0.0), (arch_wall_w_m, -upper_h_m), (0.0, -upper_h_m), (0.0, 0.0)]
+    voids = _arch_voids_for_wall(
+        wall_width=arch_wall_w_m,
+        opening_height=arch_open_h_m,
+        n_arches=n_arches,
+        arch_width=arch_w_m,
+        outer_pier=arch_outer_pier_m,
+    )
+
+    # North face (toward house): thickness extrudes south into the porch box.
+    north_wall_base = placement_matrix(
+        origin=(hx(x_out0_m), hy(y_north_out_m), float(sg_floor_top_m)),
+        x_axis=(1.0, 0.0, 0.0),
+        z_axis=(0.0, -1.0, 0.0),
+    )
+    south_wall_base = placement_matrix(
+        origin=(hx(x_out0_m), hy(y_box_south_out_m), float(sg_floor_top_m)),
+        x_axis=(1.0, 0.0, 0.0),
+        z_axis=(0.0, 1.0, 0.0),
+    )
+
+    for label, base_m in [("North", north_wall_base), ("South", south_wall_base)]:
+        lower = add_prism_from_profile_with_voids(
+            f,
+            context=contexts.body,
+            storey=porch_sunken,
+            ifc_class="IfcWall",
+            name=f"Sunken Garden Porch {label} Arch Wall (Lower)",
+            outer_profile_points=outer_lower,
+            inner_profile_points=voids,
+            depth=sg_wall_thk_m,
+            placement_matrix=base_m,
+            placement_is_storey_relative=False,
+        )
+        upper_base = base_m.copy()
+        upper_base[2, 3] = float(porch_floor_top_m)
+        upper = add_prism_from_profile_with_voids(
+            f,
+            context=contexts.body,
+            storey=porch_main,
+            ifc_class="IfcWall",
+            name=f"Sunken Garden Porch {label} Arch Wall (Upper)",
+            outer_profile_points=outer_upper,
+            inner_profile_points=voids,
+            depth=sg_wall_thk_m,
+            placement_matrix=upper_base,
+            placement_is_storey_relative=False,
+        )
+        sg_concrete.extend([lower, upper])
+
+    # ---- Porch + deck framing -------------------------------------------------
+    joist_w_m = inch(sunken.porch_joist_width_in)
+    joist_d_m = inch(sunken.porch_joist_depth_in)
+    joist_spacing_m = inch(sunken.porch_joist_spacing_in)
+
+    def x_positions(start_x_m: float, end_x_m: float) -> list[float]:
+        xs: list[float] = []
+        x = float(start_x_m)
+        while x <= end_x_m + 1e-9:
+            xs.append(x)
+            x += float(joist_spacing_m)
+        if xs and xs[-1] < end_x_m - 1e-6:
+            xs.append(float(end_x_m))
+        return xs
+
+    # Porch joists span the clear depth between the north and porch south walls.
+    span_y0_m = y_north_in_m
+    span_y1_m = y_box_south_in_m
+    z_center_porch_joist = porch_floor_top_m - deck_thk_m - joist_d_m / 2.0
+    for i, x_m in enumerate(x_positions(x_in0_m, x_in1_m), start=1):
+        joist = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=porch_main,
+            name=f"Porch Joist {i:02d}",
+            p1=(hx(x_m), hy(span_y0_m), float(z_center_porch_joist)),
+            p2=(hx(x_m), hy(span_y1_m), float(z_center_porch_joist)),
+            width=float(joist_w_m),
+            depth=float(joist_d_m),
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
+            x_axis_hint=(1.0, 0.0, 0.0),
+            points_are_storey_relative=False,
+        )
+        sg_framing.append(joist)
+
+    # Deck joists at the second-storey deck level (placeholder framing, no slope yet).
+    z_center_deck_joist = deck_floor_top_m - deck_thk_m - joist_d_m / 2.0
+    for i, x_m in enumerate(x_positions(x_in0_m, x_in1_m), start=1):
+        joist = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=porch_deck,
+            name=f"Deck Joist {i:02d}",
+            p1=(hx(x_m), hy(span_y0_m), float(z_center_deck_joist)),
+            p2=(hx(x_m), hy(span_y1_m), float(z_center_deck_joist)),
+            width=float(joist_w_m),
+            depth=float(joist_d_m),
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
+            x_axis_hint=(1.0, 0.0, 0.0),
+            points_are_storey_relative=False,
+        )
+        sg_framing.append(joist)
+
+    porch_floor_deck = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=porch_main,
+        ifc_class="IfcSlab",
+        name="Porch Floor Deck (placeholder)",
+        profile_points=_rect_polyline_xy((0.0, 0.0), (sg_clear_w_m, porch_clear_d_m)),
+        depth=deck_thk_m,
+        placement_matrix=translation_matrix(hx(x_in0_m), hy(y_box_south_in_m), porch_floor_top_m - deck_thk_m),
+        placement_is_storey_relative=False,
+        predefined_type="FLOOR",
+    )
+    sg_framing.append(porch_floor_deck)
+
+    # Deck slab (roof to porch), includes the wall thickness for a simple "cap" volume.
+    deck_slab = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=porch_deck,
+        ifc_class="IfcSlab",
+        name="Porch Roof / Deck Slab (placeholder)",
+        profile_points=_rect_polyline_xy((0.0, 0.0), (arch_wall_w_m, porch_clear_d_m + 2.0 * sg_wall_thk_m)),
+        depth=deck_thk_m,
+        placement_matrix=translation_matrix(hx(x_out0_m), hy(y_box_south_out_m), deck_floor_top_m - deck_thk_m),
+        placement_is_storey_relative=False,
+        predefined_type="ROOF",
+    )
+    sg_framing.append(deck_slab)
+
+    # Railing around deck perimeter (simple solid bands for now).
+    rail_elev_m = deck_floor_top_m
+    rail_z0_m = float(rail_elev_m)
+    rail_h_m = float(rail_h_m)
+    rail_thk_m = float(rail_thk_m)
+
+    deck_corners = {
+        "x0": hx(x_out0_m),
+        "x1": hx(x_out1_m),
+        "y0": hy(y_box_south_out_m),
+        "y1": hy(y_north_out_m),
+    }
+    rail_segments = [
+        ("Deck Railing South", (deck_corners["x0"], deck_corners["y0"]), (deck_corners["x1"], deck_corners["y0"])),
+        ("Deck Railing East", (deck_corners["x1"], deck_corners["y0"]), (deck_corners["x1"], deck_corners["y1"])),
+        ("Deck Railing North", (deck_corners["x1"], deck_corners["y1"]), (deck_corners["x0"], deck_corners["y1"])),
+        ("Deck Railing West", (deck_corners["x0"], deck_corners["y1"]), (deck_corners["x0"], deck_corners["y0"])),
+    ]
+    for name, p1, p2 in rail_segments:
+        rail = add_wall_between_points(
+            f,
+            context=contexts.body,
+            storey=porch_deck,
+            name=name,
+            p1=p1,
+            p2=p2,
+            elevation=rail_z0_m,
+            height=rail_h_m,
+            thickness=rail_thk_m,
+        )
+        sg_framing.append(rail)
+
+    # Group + style assignments
+    assign_to_group(f, group=groups["Concrete"], products=sg_concrete)
+    assign_to_group(f, group=groups["Concrete"], products=sg_aggregate)
+    assign_to_group(f, group=groups["Framing"], products=sg_framing)
+    for el in sg_concrete:
+        assign_surface_style(f, element=el, style=concrete_style)
+    for el in sg_aggregate:
+        assign_surface_style(f, element=el, style=aggregate_style)
+    for el in sg_framing:
+        assign_surface_style(f, element=el, style=framing_wood_style)
 
     # ---- Garage shell ----------------------------------------------------------
     garage_size_m = ft(spec.garage_size_ft)

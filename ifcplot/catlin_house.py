@@ -473,6 +473,105 @@ def build_catlin_house_ifc(*, out_path: Path, site: CatlinSitePlacement | None =
     wall_furring_m = inch(0.5)
     wall_metal_m = inch(0.5)
 
+    # ---- Detail parameter sets ------------------------------------------------
+    # Store key construction/detail parameters as JSON on the House building so matplotlib detail
+    # scripts can read the same "source of truth" as the IFC geometry generator.
+    basement_construction_params = {
+        "foundation": {
+            "wall_thickness_in": spec.basement_wall_thickness_in,
+            "footing_width_in": 20.0,
+            "footing_thickness_in": 8.0,
+            "stone_base_thickness_in": 6.0,
+            "stone_base_extra_in": 8.0,
+            "french_drain_diameter_in": 4.0,
+            "river_rock_depth_in": 8.0,
+            "river_rock_width_in": 10.0,
+        },
+        "slab": {
+            "slab_thickness_in": spec.basement_slab_thickness_in,
+            "xps_under_in": 2.0,
+            "vapor_barrier_in": 0.05,  # schematic thickness for plotting
+            "stone_under_in": 4.0,
+            "thermal_break_in": 1.0,
+            "sealant_in": 0.5,
+        },
+    }
+    set_pset_json(
+        f,
+        product=house_bldg,
+        pset_name="Pset_ifcPlot_BasementConstruction",
+        prop_name="ParamsJSON",
+        value=basement_construction_params,
+    )
+
+    basement_to_framed_wall_detail_params = {
+        "wall": {
+            "drywall_in": 0.625,
+            "stud_depth_in": 5.5,
+            "sheathing_in": 0.625,
+            "membrane_in": 0.6,  # exaggerated for visibility in 2D details
+            "polyiso_in": 2.0,
+            "eps_in": 2.0,
+            "furring_in": 0.5,
+            "cladding_in": 0.5,
+        },
+        "basement_exterior": {
+            "xps_layer_in": 2.0,
+            "xps_layers": 2,
+            "xps_protect_in": 0.5,
+        },
+        "sill": {"gasket_in": 0.25, "plate_in": 1.5},
+        "detail_view": {
+            "grade_offset_in": 12.0,
+            "basement_above_grade_in": 24.0,
+            "basement_wall_show_height_in": 48.0,
+            "slab_show_width_in": 18.0,
+        },
+    }
+    set_pset_json(
+        f,
+        product=house_bldg,
+        pset_name="Pset_ifcPlot_BasementToFramedWallDetail",
+        prop_name="ParamsJSON",
+        value=basement_to_framed_wall_detail_params,
+    )
+
+    sauna_detail_params = {
+        "finish": {
+            "polyiso_in": 2.0,
+            "furring_in": 0.5,
+            "tg_in": 1.0,
+            "baseboard_height_in": 6.0,
+            "membrane_in": 0.25,
+            "flashing_in": 0.35,
+        },
+        "structure": {
+            "clear_height_in": spec.basement_clear_height_ft * 12.0,
+            "ceiling_slab_in": spec.basement_ceiling_slab_thickness_in,
+            "drop_ceiling_depth_in": 3.5,
+            "drop_ceiling_gap_in": 1.0,
+        },
+        "adjacent_wall": {"stud_depth_in": 3.5, "drywall_in": 0.625, "gap_to_concrete_in": 0.5},
+        "benches": {"depth_in": 20.0, "thickness_in": 1.5, "lower_top_in": 18.0, "upper_top_in": 36.0},
+        "heater": {"width_in": 10.0, "height_in": 18.0},
+        "sauna_floor_slope": {"rise_in": 1.0, "run_ft": 8.0},  # 1/8" per ft over 8'
+        "shower": {
+            "recess_in": 4.0,
+            "tile_in": 0.75,
+            "wall_backer_in": 1.0,
+            "glass_in": 0.5,
+            "glass_gap_in": 1.0,
+            "hrv_duct_in": 3.0,
+        },
+    }
+    set_pset_json(
+        f,
+        product=house_bldg,
+        pset_name="Pset_ifcPlot_SaunaShowerDetail",
+        prop_name="ParamsJSON",
+        value=sauna_detail_params,
+    )
+
     def add_layered_wall_segments(
         *,
         storey: Any,

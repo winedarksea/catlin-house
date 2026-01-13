@@ -58,6 +58,54 @@ def test_roof_has_detail_pset_json(tmp_path) -> None:
     assert params["roof"]["pitch_rise_over_run"] == CatlinHouseSpec().roof_pitch_rise_over_run
 
 
+def test_house_has_basement_construction_pset_json(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    house = next(b for b in f.by_type("IfcBuilding") if b.Name == "House")
+    psets = ifcopenshell.util.element.get_psets(house)
+    raw = psets.get("Pset_ifcPlot_BasementConstruction", {}).get("ParamsJSON")
+    assert raw
+
+    params = json.loads(raw)
+    assert {"foundation", "slab"} <= set(params)
+    spec = CatlinHouseSpec()
+    assert params["foundation"]["wall_thickness_in"] == spec.basement_wall_thickness_in
+    assert params["slab"]["slab_thickness_in"] == spec.basement_slab_thickness_in
+
+
+def test_house_has_basement_to_framed_wall_detail_pset_json(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    house = next(b for b in f.by_type("IfcBuilding") if b.Name == "House")
+    psets = ifcopenshell.util.element.get_psets(house)
+    raw = psets.get("Pset_ifcPlot_BasementToFramedWallDetail", {}).get("ParamsJSON")
+    assert raw
+
+    params = json.loads(raw)
+    assert {"wall", "basement_exterior", "sill", "detail_view"} <= set(params)
+    assert {"stud_depth_in", "sheathing_in", "polyiso_in", "eps_in"} <= set(params["wall"])
+    assert params["basement_exterior"]["xps_layers"] >= 1
+
+
+def test_house_has_sauna_shower_detail_pset_json(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    house = next(b for b in f.by_type("IfcBuilding") if b.Name == "House")
+    psets = ifcopenshell.util.element.get_psets(house)
+    raw = psets.get("Pset_ifcPlot_SaunaShowerDetail", {}).get("ParamsJSON")
+    assert raw
+
+    params = json.loads(raw)
+    assert {"finish", "structure", "adjacent_wall", "benches", "heater", "shower"} <= set(params)
+    assert params["structure"]["clear_height_in"] == CatlinHouseSpec().basement_clear_height_ft * 12.0
+
+
 def test_house_elements_have_surface_styles(tmp_path) -> None:
     out_path = tmp_path / "catlin_house.ifc"
     build_catlin_house_ifc(out_path=out_path)

@@ -304,6 +304,8 @@ def build_catlin_house_ifc(
         texture_path=texture_rel.as_posix(),
         rgb=hex_to_rgb(MATERIAL_COLORS["metal_dark"]),
     )
+    garage_door_style = create_surface_style_shading(f, name="Garage Door", rgb=(0.9, 0.9, 0.9))
+    opening_fill_style = create_surface_style_shading(f, name="Opening Fill", rgb=(0.6, 0.6, 0.6))
 
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
@@ -1966,57 +1968,67 @@ def build_catlin_house_ifc(
     garage_icf_eps_ext = []
     garage_icf_core = []
     garage_icf_eps_int = []
+
+    door_width_m = ft(16.0)
+    door_height_m = ft(7.0)
+    door_side_offset_m = (garage_size_m - door_width_m) / 2.0
+    door_bottom_elev_m = 0.0
+    
+    # Small clearance for the wall opening to avoid Z-fighting with the door faces
+    opening_clearance_m = 0.002 # 2mm
+    opening_profile = [
+        (door_side_offset_m - opening_clearance_m, door_bottom_elev_m - opening_clearance_m),
+        (door_side_offset_m + door_width_m + opening_clearance_m, door_bottom_elev_m - opening_clearance_m),
+        (door_side_offset_m + door_width_m + opening_clearance_m, door_bottom_elev_m + door_height_m + opening_clearance_m),
+        (door_side_offset_m - opening_clearance_m, door_bottom_elev_m + door_height_m + opening_clearance_m),
+    ]
+
     for i, (p1, p2) in enumerate(garage_perim, start=1):
-        eps_ext = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage ICF EPS (Ext) {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_elev_m,
-            height=icf_total_h_m,
-            thickness=icf_eps_m,
-            direction_sense="POSITIVE",  # inward from exterior face
-            offset=0.0,
-        )
-        core = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage ICF Concrete Core {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_elev_m,
-            height=icf_total_h_m,
-            thickness=icf_core_m,
-            direction_sense="POSITIVE",
-            offset=icf_eps_m,
-        )
-        eps_int = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage ICF EPS (Int) {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_elev_m,
-            height=icf_total_h_m,
-            thickness=icf_eps_m,
-            direction_sense="POSITIVE",
-            offset=icf_eps_m + icf_core_m,
-        )
-        garage_icf_eps_ext.append(eps_ext)
-        garage_icf_core.append(core)
-        garage_icf_eps_int.append(eps_int)
+        wall_is_west = i == 3
+        v = np.array(p2) - np.array(p1)
+        length = np.linalg.norm(v)
+        v_norm = v / length if length > 1e-9 else np.array([1.0, 0.0])
+
+        # Create ICF wall layers
+        icf_opening_z0_rel = max(0, door_bottom_elev_m - icf_elev_m)
+        icf_opening_h = max(0, min(door_bottom_elev_m + door_height_m, icf_elev_m + icf_total_h_m) - (icf_elev_m + icf_opening_z0_rel))
+        
+        inward_offset = 0.0
+        # Inward layers
+        for layer_name, layer_thickness, style in [("EPS (Ext)", icf_eps_m, eps_style), ("Concrete Core", icf_core_m, concrete_style), ("EPS (Int)", icf_eps_m, eps_style)]:
+            if wall_is_west:
+                # Shift origin by inward_offset along the extrusion direction (z_axis)
+                z_axis = np.array((-v_norm[1], v_norm[0], 0.0))
+                origin = np.array((p1[0], p1[1], 0.0)) + inward_offset * z_axis
+                placement_m = placement_matrix(
+                    origin=tuple(origin),
+                    x_axis=(v_norm[0], v_norm[1], 0),
+                    z_axis=tuple(z_axis),
+                )
+                
+                outer_profile = [(0, icf_elev_m), (length, icf_elev_m), (length, icf_elev_m + icf_total_h_m), (0, icf_elev_m + icf_total_h_m)]
+                
+                wall = add_prism_from_profile_with_voids(
+                     f, context=contexts.body, storey=garage_level, ifc_class="IfcWall", name=f"Garage ICF {layer_name} {i}",
+                     outer_profile_points=[(p[0], -p[1]) for p in outer_profile],
+                     inner_profile_points=[[(p[0], -p[1]) for p in opening_profile]] if icf_opening_h > 0 else [],
+                     depth=layer_thickness, placement_matrix=placement_m, placement_is_storey_relative=False
+                 )
+            else:
+                wall = add_wall_between_points(
+                    f, context=contexts.body, storey=garage_level, name=f"Garage ICF {layer_name} {i}", p1=p1, p2=p2,
+                    elevation=icf_elev_m, height=icf_total_h_m, thickness=layer_thickness, direction_sense="POSITIVE", offset=inward_offset,
+                )
+            
+            if "Ext" in layer_name: garage_icf_eps_ext.append(wall)
+            elif "Core" in layer_name: garage_icf_core.append(wall)
+            else: garage_icf_eps_int.append(wall)
+            assign_surface_style(f, element=wall, style=style)
+            inward_offset += layer_thickness
 
     assign_to_group(f, group=groups["Concrete"], products=garage_icf_core)
     assign_to_group(f, group=groups["Cladding"], products=[*garage_icf_eps_ext, *garage_icf_eps_int])
-    for wall in garage_icf_core:
-        assign_surface_style(f, element=wall, style=concrete_style)
-    for wall in [*garage_icf_eps_ext, *garage_icf_eps_int]:
-        assign_surface_style(f, element=wall, style=eps_style)
-
+    
     # Garage slab-on-grade.
     garage_slab_thk_m = inch(spec.garage_slab_thickness_in)
     slab_inner_size_m = garage_size_m - 2.0 * icf_total_thk_m
@@ -2028,7 +2040,7 @@ def build_catlin_house_ifc(
         storey=garage_level,
         name="Garage Floor Slab",
         polyline=_rect_polyline_garage(icf_total_thk_m, icf_total_thk_m, slab_inner_size_m, slab_inner_size_m),
-        elevation=-garage_slab_thk_m,  # top of slab at grade (Z=0)
+        elevation=0.0,
         depth=garage_slab_thk_m,
         predefined_type="FLOOR",
     )
@@ -2036,6 +2048,7 @@ def build_catlin_house_ifc(
     assign_surface_style(f, element=garage_slab, style=concrete_style)
 
     # Above-grade framed wall layers (IFC-style: separate walls with offsets).
+    wood_wall_elev_m = icf_above_grade_m
     drywall_m = inch(garage_wall.drywall_in)
     stud_m = inch(garage_wall.stud_depth_in)
     zip_r_m = inch(garage_wall.sheathing_in)
@@ -2048,93 +2061,134 @@ def build_catlin_house_ifc(
     garage_wall_rainscreen = []
     garage_wall_metal = []
     for i, (p1, p2) in enumerate(garage_perim, start=1):
-        zip_r = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage Zip-R Sheathing {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_above_grade_m,
-            height=wood_wall_h_m,
-            thickness=zip_r_m,
-            direction_sense="POSITIVE",  # inward
-            offset=0.0,
-        )
-        studs = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage Stud Wall {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_above_grade_m,
-            height=wood_wall_h_m,
-            thickness=stud_m,
-            direction_sense="POSITIVE",
-            offset=zip_r_m,
-        )
-        drywall = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage Interior Drywall {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_above_grade_m,
-            height=wood_wall_h_m,
-            thickness=drywall_m,
-            direction_sense="POSITIVE",
-            offset=zip_r_m + stud_m,
-        )
+        wall_is_west = i == 3
+        v = np.array(p2) - np.array(p1)
+        length = np.linalg.norm(v)
+        v_norm = v / length if length > 1e-9 else np.array([1.0, 0.0])
 
-        rainscreen = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage Rainscreen {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_above_grade_m,
-            height=wood_wall_h_m,
-            thickness=rainscreen_m,
-            direction_sense="NEGATIVE",  # outward
-            offset=0.0,
-        )
-        metal = add_wall_between_points(
-            f,
-            context=contexts.body,
-            storey=garage_level,
-            name=f"Garage Metal Siding {i}",
-            p1=p1,
-            p2=p2,
-            elevation=icf_above_grade_m,
-            height=wood_wall_h_m,
-            thickness=metal_siding_m,
-            direction_sense="NEGATIVE",
-            offset=-rainscreen_m,
-        )
+        wood_opening_z0_rel = max(0, door_bottom_elev_m - wood_wall_elev_m)
+        wood_opening_h = max(0, min(door_bottom_elev_m + door_height_m, wood_wall_elev_m + wood_wall_h_m) - (wood_wall_elev_m + wood_opening_z0_rel))
+        
+        # Inward layers
+        inward_offset = 0.0
+        for layer_name, layer_thickness, style in [("Zip-R Sheathing", zip_r_m, sheathing_style), ("Stud Wall", stud_m, framing_wood_style), ("Interior Drywall", drywall_m, drywall_style)]:
+            if wall_is_west:
+                # Shift origin by inward_offset along the extrusion direction (z_axis)
+                z_axis = np.array((-v_norm[1], v_norm[0], 0.0))
+                origin = np.array((p1[0], p1[1], 0.0)) + inward_offset * z_axis
+                placement_m = placement_matrix(
+                    origin=tuple(origin),
+                    x_axis=(v_norm[0], v_norm[1], 0),
+                    z_axis=tuple(z_axis),
+                )
+                outer_profile = [(0, wood_wall_elev_m), (length, wood_wall_elev_m), (length, wood_wall_elev_m + wood_wall_h_m), (0, wood_wall_elev_m + wood_wall_h_m)]
+                wall = add_prism_from_profile_with_voids(
+                     f, context=contexts.body, storey=garage_level, ifc_class="IfcWall", name=f"Garage {layer_name} {i}",
+                     outer_profile_points=[(p[0], -p[1]) for p in outer_profile],
+                     inner_profile_points=[[(p[0], -p[1]) for p in opening_profile]] if wood_opening_h > 0 else [],
+                     depth=layer_thickness, placement_matrix=placement_m, placement_is_storey_relative=False
+                 )
+            else:
+                wall = add_wall_between_points(
+                    f, context=contexts.body, storey=garage_level, name=f"Garage {layer_name} {i}", p1=p1, p2=p2,
+                    elevation=wood_wall_elev_m, height=wood_wall_h_m, thickness=layer_thickness, direction_sense="POSITIVE", offset=inward_offset,
+                )
+            if "Zip-R" in layer_name: garage_wall_zip_r.append(wall)
+            elif "Stud" in layer_name: garage_wall_studs.append(wall)
+            else: garage_wall_drywall.append(wall)
+            assign_surface_style(f, element=wall, style=style)
+            inward_offset += layer_thickness
+        
+        # Outward layers
+        outward_offset = 0.0
+        for layer_name, layer_thickness, style in [("Rainscreen", rainscreen_m, membrane_style), ("Metal Siding", metal_siding_m, metal_dark_style)]:
+            if wall_is_west:
+                # Use inward-pointing z-axis to keep local y-axis pointing DOWN,
+                # ensuring (p[0], -p[1]) profile points translate to correct upward elevation.
+                z_axis_in = np.array((-v_norm[1], v_norm[0], 0.0))
+                # For outward layers, the origin (exterior face) must be shifted outward
+                # relative to the inward z-axis by (outward_offset + layer_thickness).
+                origin = np.array((p1[0], p1[1], 0.0)) - (outward_offset + layer_thickness) * z_axis_in
+                placement_m = placement_matrix(
+                    origin=tuple(origin),
+                    x_axis=(v_norm[0], v_norm[1], 0),
+                    z_axis=tuple(z_axis_in),
+                )
+                outer_profile = [(0, wood_wall_elev_m), (length, wood_wall_elev_m), (length, wood_wall_elev_m + wood_wall_h_m), (0, wood_wall_elev_m + wood_wall_h_m)]
+                wall = add_prism_from_profile_with_voids(
+                     f, context=contexts.body, storey=garage_level, ifc_class="IfcWall", name=f"Garage {layer_name} {i}",
+                     outer_profile_points=[(p[0], -p[1]) for p in outer_profile],
+                     inner_profile_points=[[(p[0], -p[1]) for p in opening_profile]] if wood_opening_h > 0 else [],
+                     depth=layer_thickness, placement_matrix=placement_m, placement_is_storey_relative=False
+                 )
+            else:
+                wall = add_wall_between_points(
+                    f, context=contexts.body, storey=garage_level, name=f"Garage {layer_name} {i}", p1=p1, p2=p2,
+                    elevation=wood_wall_elev_m, height=wood_wall_h_m, thickness=layer_thickness, direction_sense="NEGATIVE", offset=-outward_offset,
+                )
+            if "Rainscreen" in layer_name: garage_wall_rainscreen.append(wall)
+            else: garage_wall_metal.append(wall)
+            assign_surface_style(f, element=wall, style=style)
+            outward_offset += layer_thickness
 
-        garage_wall_zip_r.append(zip_r)
-        garage_wall_studs.append(studs)
-        garage_wall_drywall.append(drywall)
-        garage_wall_rainscreen.append(rainscreen)
-        garage_wall_metal.append(metal)
+        if wall_is_west:
+            # Add Garage Door element
+            door_thickness_m = inch(2.0)
+            # Place door aligned with the stud layer (after Zip-R)
+            door_z_offset = zip_r_m + (stud_m - door_thickness_m) / 2.0
+            
+            z_axis_in = np.array((-v_norm[1], v_norm[0], 0.0))
+            origin_door = np.array((p1[0], p1[1], 0.0)) + door_z_offset * z_axis_in
+            
+            placement_m_door = placement_matrix(
+                origin=tuple(origin_door),
+                x_axis=(v_norm[0], v_norm[1], 0),
+                z_axis=tuple(z_axis_in),
+            )
+            
+            door_profile = [
+                (door_side_offset_m, door_bottom_elev_m),
+                (door_side_offset_m + door_width_m, door_bottom_elev_m),
+                (door_side_offset_m + door_width_m, door_bottom_elev_m + door_height_m),
+                (door_side_offset_m, door_bottom_elev_m + door_height_m),
+            ]
+            
+            door = add_prism_from_profile(
+                f, context=contexts.body, storey=garage_level, ifc_class="IfcDoor", name="Garage Door",
+                profile_points=[(p[0], -p[1]) for p in door_profile],
+                depth=door_thickness_m, placement_matrix=placement_m_door, placement_is_storey_relative=False,
+                predefined_type="DOOR",
+            )
+            assign_surface_style(f, element=door, style=garage_door_style)
+
+            # Add an IfcOpeningElement to "fill" the thickness of the wall opening with a consistent color.
+            # We use the opening profile (with clearance) and a depth that covers the entire wall.
+            wood_wall_total_thk_m = drywall_m + stud_m + zip_r_m + rainscreen_m + metal_siding_m
+            opening_depth = icf_total_thk_m + wood_wall_total_thk_m
+            # Centering it on the wall reference line
+            z_axis_in = np.array((-v_norm[1], v_norm[0], 0.0))
+            # The inward layers start at 0 and go to icf_total_thk_m
+            # The outward layers start at 0 and go outward.
+            # To cover everything, we start at the max outward extent and extrude inward.
+            total_outward = rainscreen_m + metal_siding_m
+            origin_opening = np.array((p1[0], p1[1], 0.0)) - total_outward * z_axis_in
+            
+            placement_m_opening = placement_matrix(
+                origin=tuple(origin_opening),
+                x_axis=(v_norm[0], v_norm[1], 0),
+                z_axis=tuple(z_axis_in),
+            )
+            
+            opening_fill = add_prism_from_profile(
+                f, context=contexts.body, storey=garage_level, ifc_class="IfcBuildingElementProxy", name="Garage Door Opening Fill",
+                profile_points=[(p[0], -p[1]) for p in opening_profile],
+                depth=opening_depth + total_outward, placement_matrix=placement_m_opening, placement_is_storey_relative=False,
+            )
+            assign_surface_style(f, element=opening_fill, style=opening_fill_style)
 
     assign_to_group(f, group=groups["Framing"], products=[*garage_wall_zip_r, *garage_wall_studs])
     assign_to_group(f, group=groups["Drywall"], products=garage_wall_drywall)
     assign_to_group(f, group=groups["Cladding"], products=[*garage_wall_rainscreen, *garage_wall_metal])
-
-    for wall in garage_wall_zip_r:
-        assign_surface_style(f, element=wall, style=sheathing_style)
-    for wall in garage_wall_studs:
-        assign_surface_style(f, element=wall, style=framing_wood_style)
-    for wall in garage_wall_drywall:
-        assign_surface_style(f, element=wall, style=drywall_style)
-    for wall in garage_wall_rainscreen:
-        assign_surface_style(f, element=wall, style=membrane_style)
-    for wall in garage_wall_metal:
-        assign_surface_style(f, element=wall, style=metal_dark_style)
 
     # Garage roof prism (placeholder).
     g_overhang_m = inch(spec.garage_overhang_in)

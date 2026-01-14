@@ -35,6 +35,9 @@ from ifcplot.ifc_utils import (
 )
 from ifcplot.units import ft, inch
 
+# TODO: visualize the joists, studs and beams in the walls as distinct items visible in Bonsai BIM
+# TODO: build the garage roof properly, adding trusses to replace the simple gable prism
+
 
 def hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
     """Convert hex color string to RGB tuple with values 0.0-1.0."""
@@ -250,6 +253,7 @@ def build_catlin_house_ifc(
     site: CatlinSitePlacement | None = None,
     spec: CatlinHouseSpec | None = None,
     sunken_garden_spec: SunkenGardenSpec | None = None,
+    include_scale_figure: bool = True,
 ) -> Any:
     site = site or CatlinSitePlacement()
     spec = spec or CatlinHouseSpec()
@@ -287,6 +291,12 @@ def build_catlin_house_ifc(
     membrane_style = create_surface_style_shading(f, name="Membrane", rgb=hex_to_rgb(MATERIAL_COLORS["membrane"]))
     framing_wood_style = create_surface_style_shading(f, name="Framing Wood", rgb=hex_to_rgb(MATERIAL_COLORS["wood"]))
     metal_dark_style = create_surface_style_shading(f, name="Metal (Dark)", rgb=hex_to_rgb(MATERIAL_COLORS["metal_dark"]))
+    scale_figure_style = create_surface_style_shading(
+        f,
+        name="Scale Figure",
+        rgb=(0.2, 0.5, 0.9),
+        transparency=0.65,
+    )
 
     standing_seam_style = create_surface_style_with_texture(
         f,
@@ -1872,6 +1882,29 @@ def build_catlin_house_ifc(
         assign_surface_style(f, element=el, style=aggregate_style)
     for el in sg_framing:
         assign_surface_style(f, element=el, style=framing_wood_style)
+
+    if include_scale_figure:
+        # Simple “human scale” marker for visual context (Bonsai-friendly solid).
+        person_h_m = 1.75
+        person_w_m = 0.55
+        person_d_m = 0.25
+        person_x0 = hx(x_center_m - person_w_m / 2.0) + 2.0
+        person_y_mid = (y_north_in_m + y_south_in_m) / 2.0
+        person_y0 = hy(person_y_mid - person_d_m / 2.0) + 0.5
+        person_z0 = float(sg_floor_top_m)
+        scale_person = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=porch_sunken,
+            ifc_class="IfcBuildingElementProxy",
+            name="Scale Figure (1.75m)",
+            profile_points=_rect_polyline_xy((0.0, 0.0), (person_w_m, person_d_m)),
+            depth=float(person_h_m),
+            placement_matrix=translation_matrix(person_x0, person_y0, person_z0),
+            placement_is_storey_relative=False,
+        )
+        assign_to_group(f, group=groups["Furnishings"], products=[scale_person])
+        assign_surface_style(f, element=scale_person, style=scale_figure_style)
 
     # ---- Garage shell ----------------------------------------------------------
     garage_size_m = ft(spec.garage_size_ft)

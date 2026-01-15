@@ -306,6 +306,7 @@ def build_catlin_house_ifc(
     )
     garage_door_style = create_surface_style_shading(f, name="Garage Door", rgb=(0.9, 0.9, 0.9))
     opening_fill_style = create_surface_style_shading(f, name="Opening Fill", rgb=(0.6, 0.6, 0.6))
+    glass_style = create_surface_style_shading(f, name="Glass", rgb=(0.8, 0.9, 0.95), transparency=0.7)
 
     # ---- Buildings and storeys -------------------------------------------------
     house_bldg = add_building(f, site=ifc_site, name="House", origin=site.house_origin_m)
@@ -1657,15 +1658,6 @@ def build_catlin_house_ifc(
         height_m=sg_retaining_h_m,
     )
     _add_wall_prism(
-        name="Sunken Garden West Wall (Porch Box)",
-        x0_m=x_out0_m,
-        y0_m=y_box_south_out_m,
-        w_m=sg_wall_thk_m,
-        h_m=y_north_out_m - y_box_south_out_m,
-        z0_m=sg_floor_top_m,
-        height_m=sg_box_h_m,
-    )
-    _add_wall_prism(
         name="Sunken Garden East Wall (Open Zone)",
         x0_m=x_in1_m,
         y0_m=y_south_out_m,
@@ -1674,15 +1666,103 @@ def build_catlin_house_ifc(
         z0_m=sg_floor_top_m,
         height_m=sg_retaining_h_m,
     )
-    _add_wall_prism(
-        name="Sunken Garden East Wall (Porch Box)",
-        x0_m=x_in1_m,
-        y0_m=y_box_south_out_m,
-        w_m=sg_wall_thk_m,
-        h_m=y_north_out_m - y_box_south_out_m,
-        z0_m=sg_floor_top_m,
-        height_m=sg_box_h_m,
+
+    # Porch box side walls with arched doors
+    door_width_m = ft(4.0)
+    door_height_m = ft(8.0)
+    wall_len_m = y_north_out_m - y_box_south_out_m
+
+    # Door is 1' from house (north) end of wall. Profile X-axis runs from North to South.
+    door_pos_along_wall_m = ft(1.0)
+
+    # Per user: "40in semicircular arch" on 48in door is geometrically inconsistent. Assuming a 24in radius semicircular arch.
+    door_void_profile_local = _arch_void_profile_points(
+        x_left=door_pos_along_wall_m,
+        x_right=door_pos_along_wall_m + door_width_m,
+        opening_height=door_height_m,
     )
+    # The door is on the porch's second floor, which starts at porch_floor_top_m. The wall prism starts at sg_floor_top_m.
+    # We need to shift the void profile up by the height of the lower level. Y points down in profile coords.
+    y_offset = porch_floor_top_m - sg_floor_top_m
+    door_void_profile = [(p[0], p[1] - y_offset) for p in door_void_profile_local]
+    outer_wall_profile = _rect_polyline_xy((0, 0), (wall_len_m, -sg_box_h_m))
+
+    west_wall_matrix = placement_matrix(
+        origin=(hx(x_out0_m), hy(y_north_out_m), sg_floor_top_m),
+        x_axis=(0.0, -1.0, 0.0),  # Profile X along world -Y (N->S)
+        z_axis=(1.0, 0.0, 0.0),  # Extrusion along world X
+    )
+    sg_west_wall_box = add_prism_from_profile_with_voids(
+        f,
+        context=contexts.body,
+        storey=porch_sunken,
+        ifc_class="IfcWall",
+        name="Sunken Garden West Wall (Porch Box)",
+        outer_profile_points=outer_wall_profile,
+        inner_profile_points=[door_void_profile],
+        depth=sg_wall_thk_m,
+        placement_matrix=west_wall_matrix,
+        placement_is_storey_relative=False,
+    )
+    sg_concrete.append(sg_west_wall_box)
+
+    east_wall_matrix = placement_matrix(
+        origin=(hx(x_in1_m), hy(y_north_out_m), sg_floor_top_m),
+        x_axis=(0.0, -1.0, 0.0),  # Profile X along world -Y (N->S)
+        z_axis=(1.0, 0.0, 0.0),
+    )
+    sg_east_wall_box = add_prism_from_profile_with_voids(
+        f,
+        context=contexts.body,
+        storey=porch_sunken,
+        ifc_class="IfcWall",
+        name="Sunken Garden East Wall (Porch Box)",
+        outer_profile_points=outer_wall_profile,
+        inner_profile_points=[door_void_profile],
+        depth=sg_wall_thk_m,
+        placement_matrix=east_wall_matrix,
+        placement_is_storey_relative=False,
+    )
+    sg_concrete.append(sg_east_wall_box)
+
+    # Create glass door fills
+    door_depth_m = inch(2.0)
+    west_door_matrix = placement_matrix(
+        origin=(hx(x_out0_m + sg_wall_thk_m / 2 - door_depth_m / 2), hy(y_north_out_m), sg_floor_top_m),
+        x_axis=(0.0, -1.0, 0.0),
+        z_axis=(1.0, 0.0, 0.0),
+    )
+    west_door = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=porch_main,
+        ifc_class="IfcDoor",
+        name="Sunken Garden West Door",
+        profile_points=door_void_profile,
+        depth=door_depth_m,
+        placement_matrix=west_door_matrix,
+        placement_is_storey_relative=False,
+        predefined_type="DOOR",
+    )
+    east_door_matrix = placement_matrix(
+        origin=(hx(x_in1_m + sg_wall_thk_m / 2 - door_depth_m / 2), hy(y_north_out_m), sg_floor_top_m),
+        x_axis=(0.0, -1.0, 0.0),
+        z_axis=(1.0, 0.0, 0.0),
+    )
+    east_door = add_prism_from_profile(
+        f,
+        context=contexts.body,
+        storey=porch_main,
+        ifc_class="IfcDoor",
+        name="Sunken Garden East Door",
+        profile_points=door_void_profile,
+        depth=door_depth_m,
+        placement_matrix=east_door_matrix,
+        placement_is_storey_relative=False,
+        predefined_type="DOOR",
+    )
+    assign_surface_style(f, element=west_door, style=glass_style)
+    assign_surface_style(f, element=east_door, style=glass_style)
 
     # Far south retaining wall (end of sunken garden).
     _add_wall_prism(

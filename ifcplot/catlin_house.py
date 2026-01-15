@@ -1672,8 +1672,8 @@ def build_catlin_house_ifc(
     door_height_m = ft(8.0)
     wall_len_m = y_north_out_m - y_box_south_out_m
 
-    # Door is 1' from house (north) end of wall. Profile X-axis runs from North to South.
-    door_pos_along_wall_m = ft(1.0)
+    # Center the door in the wall.
+    door_pos_along_wall_m = (wall_len_m - door_width_m) / 2.0
 
     # Per user: "40in semicircular arch" on 48in door is geometrically inconsistent. Assuming a 24in radius semicircular arch.
     door_void_profile_local = _arch_void_profile_points(

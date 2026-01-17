@@ -767,7 +767,15 @@ def build_catlin_house_ifc(
         label: str,
     ) -> dict[str, list[Any]]:
         created: dict[str, list[Any]] = {"studs": [], "sheathing": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
+        overlap_m = inch(4.5)
         for i, (p1, p2) in enumerate(segments, start=1):
+            p1_arr = np.array(p1, dtype=float)
+            p2_arr = np.array(p2, dtype=float)
+            v = p2_arr - p1_arr
+            v_norm = v / (np.linalg.norm(v) + 1e-9)
+            p1_outer = tuple(p1_arr - overlap_m * v_norm)
+            p2_outer = tuple(p2_arr + overlap_m * v_norm)
+    
             sheathing = add_wall_between_points(
                 f,
                 context=contexts.body,
@@ -795,20 +803,20 @@ def build_catlin_house_ifc(
                 offset=wall_sheathing_m,  # behind sheathing
             )
             assign_surface_style(f, element=studs, style=framing_wood_style)
-
+    
             created["sheathing"].append(sheathing)
             created["studs"].append(studs)
-
+    
             # Outside of sheathing: polyiso + eps + furring + standing seam (stacked outward).
             outward_offset = 0.0
-
+    
             polyiso = add_wall_between_points(
                 f,
                 context=contexts.body,
                 storey=storey,
                 name=f"House {label} Exterior Polyiso {i}",
-                p1=p1,
-                p2=p2,
+                p1=p1_outer,
+                p2=p2_outer,
                 elevation=elevation_m,
                 height=height_m,
                 thickness=wall_polyiso_m,
@@ -816,14 +824,14 @@ def build_catlin_house_ifc(
                 offset=-outward_offset,
             )
             outward_offset += wall_polyiso_m
-
+    
             eps = add_wall_between_points(
                 f,
                 context=contexts.body,
                 storey=storey,
                 name=f"House {label} Exterior EPS {i}",
-                p1=p1,
-                p2=p2,
+                p1=p1_outer,
+                p2=p2_outer,
                 elevation=elevation_m,
                 height=height_m,
                 thickness=wall_eps_m,
@@ -831,14 +839,14 @@ def build_catlin_house_ifc(
                 offset=-outward_offset,
             )
             outward_offset += wall_eps_m
-
+    
             furring = add_wall_between_points(
                 f,
                 context=contexts.body,
                 storey=storey,
                 name=f"House {label} Exterior Furring {i}",
-                p1=p1,
-                p2=p2,
+                p1=p1_outer,
+                p2=p2_outer,
                 elevation=elevation_m,
                 height=height_m,
                 thickness=wall_furring_m,
@@ -846,14 +854,14 @@ def build_catlin_house_ifc(
                 offset=-outward_offset,
             )
             outward_offset += wall_furring_m
-
+    
             metal = add_wall_between_points(
                 f,
                 context=contexts.body,
                 storey=storey,
                 name=f"House {label} Exterior Standing Seam {i}",
-                p1=p1,
-                p2=p2,
+                p1=p1_outer,
+                p2=p2_outer,
                 elevation=elevation_m,
                 height=height_m,
                 thickness=wall_metal_m,
@@ -861,12 +869,12 @@ def build_catlin_house_ifc(
                 offset=-outward_offset,
             )
             assign_surface_style(f, element=metal, style=standing_seam_style)
-
+    
             created["polyiso"].append(polyiso)
             created["eps"].append(eps)
             created["furring"].append(furring)
             created["metal"].append(metal)
-
+    
         assign_to_group(f, group=groups["Framing"], products=[*created["studs"], *created["sheathing"]])
         assign_to_group(f, group=groups["Cladding"], products=[*created["polyiso"], *created["eps"], *created["furring"], *created["metal"]])
         for elem in created["sheathing"]:
@@ -878,7 +886,6 @@ def build_catlin_house_ifc(
         for elem in created["furring"]:
             assign_surface_style(f, element=elem, style=framing_wood_style)
         return created
-
     perimeter_segments = [
         ((hx(0.0), hy(0.0)), (hx(house_size_m), hy(0.0))),  # south (eastward)
         ((hx(house_size_m), hy(0.0)), (hx(house_size_m), hy(house_size_m))),  # east (northward)
@@ -911,7 +918,15 @@ def build_catlin_house_ifc(
         ((hx(0.0), hy(house_size_m)), (hx(0.0), hy(0.0))),  # west
     ]
     attic_knee_layers: dict[str, list[Any]] = {"studs": [], "sheathing": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
+    overlap_m = inch(4.5)
     for i, (p1, p2) in enumerate(attic_knee_segments, start=1):
+        p1_arr = np.array(p1, dtype=float)
+        p2_arr = np.array(p2, dtype=float)
+        v = p2_arr - p1_arr
+        v_norm = v / (np.linalg.norm(v) + 1e-9)
+        p1_outer = tuple(p1_arr - overlap_m * v_norm)
+        p2_outer = tuple(p2_arr + overlap_m * v_norm)
+
         sheathing = add_wall_between_points(
             f,
             context=contexts.body,
@@ -945,8 +960,8 @@ def build_catlin_house_ifc(
             context=contexts.body,
             storey=house_attic,
             name=f"House Attic Knee Exterior Polyiso {i}",
-            p1=p1,
-            p2=p2,
+            p1=p1_outer,
+            p2=p2_outer,
             elevation=attic_elev_m,
             height=attic_knee_siding_height_m,
             thickness=wall_polyiso_m,
@@ -960,8 +975,8 @@ def build_catlin_house_ifc(
             context=contexts.body,
             storey=house_attic,
             name=f"House Attic Knee Exterior EPS {i}",
-            p1=p1,
-            p2=p2,
+            p1=p1_outer,
+            p2=p2_outer,
             elevation=attic_elev_m,
             height=attic_knee_siding_height_m,
             thickness=wall_eps_m,
@@ -975,8 +990,8 @@ def build_catlin_house_ifc(
             context=contexts.body,
             storey=house_attic,
             name=f"House Attic Knee Exterior Furring {i}",
-            p1=p1,
-            p2=p2,
+            p1=p1_outer,
+            p2=p2_outer,
             elevation=attic_elev_m,
             height=attic_knee_siding_height_m,
             thickness=wall_furring_m,
@@ -990,14 +1005,15 @@ def build_catlin_house_ifc(
             context=contexts.body,
             storey=house_attic,
             name=f"House Attic Knee Exterior Standing Seam {i}",
-            p1=p1,
-            p2=p2,
+            p1=p1_outer,
+            p2=p2_outer,
             elevation=attic_elev_m,
             height=attic_knee_siding_height_m,
             thickness=wall_metal_m,
             direction_sense="NEGATIVE",  # outward
             offset=-outward_offset,
         )
+        assign_surface_style(f, element=metal, style=standing_seam_style)
 
         attic_knee_layers["sheathing"].append(sheathing)
         attic_knee_layers["studs"].append(studs)

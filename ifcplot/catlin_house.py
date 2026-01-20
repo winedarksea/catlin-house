@@ -254,6 +254,9 @@ def build_catlin_house_ifc(
     spec: CatlinHouseSpec | None = None,
     sunken_garden_spec: SunkenGardenSpec | None = None,
     include_scale_figure: bool = True,
+    include_wall_studs: bool = True,
+    include_wall_plates: bool = True,
+    print_bom: bool = False,
 ) -> Any:
     site = site or CatlinSitePlacement()
     spec = spec or CatlinHouseSpec()
@@ -261,6 +264,43 @@ def build_catlin_house_ifc(
 
     f, project, ifc_site, contexts = init_ifc_project(name="ifcPlot - Catlin House", schema="IFC4")
     groups = add_trade_groups(f)
+
+    def _round_to_frac(value: float, denom: int) -> float:
+        return round(float(value) * denom) / denom
+
+    def _fmt_inches(value_in: float, *, denom: int = 8) -> str:
+        v = _round_to_frac(float(value_in), denom)
+        whole = int(v // 1)
+        frac = v - whole
+        n = int(round(frac * denom))
+        if n == 0:
+            return f"{whole}"
+        if n == denom:
+            return f"{whole + 1}"
+        # Reduce the fraction (e.g. 4/8 -> 1/2) for nicer BOM display.
+        from math import gcd
+
+        g = gcd(n, denom)
+        n //= g
+        d = denom // g
+        return f"{whole} {n}/{d}" if whole else f"{n}/{d}"
+
+    def _fmt_length_in(value_in: float) -> str:
+        return f'{_fmt_inches(value_in)}"'
+
+    bom: dict[str, Any] = {
+        "metadata": {"length_units": "in", "rounding": "nearest 1/8 in"},
+        "studs": {"total": 0, "items": {}},
+        "joists": {"total": 0, "items": {}},
+        "plates": {"total": 0, "items": {}},
+        "scopes": {"studs": {}, "joists": {}, "plates": {}},
+    }
+
+    def _bom_add_item(*, category: str, material: str, thickness_in: float, depth_in: float, length_in: float, count: int = 1) -> None:
+        items = bom[category]["items"]
+        key = f"{material} {thickness_in:.3g}x{depth_in:.3g} x {_fmt_length_in(length_in)}"
+        items[key] = int(items.get(key, 0)) + int(count)
+        bom[category]["total"] = int(bom[category]["total"]) + int(count)
 
     house_size_m = ft(spec.house_size_ft)
     house_origin_x, house_origin_y, _ = site.house_origin_m
@@ -757,6 +797,229 @@ def build_catlin_house_ifc(
         value=sauna_detail_params,
     )
 
+    def _positions_0_to_length(length_m: float, spacing_m: float) -> list[float]:
+        if length_m < 0:
+            raise ValueError("length_m must be >= 0")
+        if spacing_m <= 0:
+            raise ValueError("spacing_m must be > 0")
+        xs: list[float] = []
+        x = 0.0
+        while x <= length_m + 1e-9:
+            xs.append(float(x))
+            x += float(spacing_m)
+        if xs and xs[-1] < length_m - 1e-6:
+            xs.append(float(length_m))
+        return xs
+
+    def _positions_with_end_centers(length_m: float, spacing_m: float, *, start_center_m: float, end_center_m: float) -> list[float]:
+        if length_m < 0:
+            raise ValueError("length_m must be >= 0")
+        if spacing_m <= 0:
+            raise ValueError("spacing_m must be > 0")
+        if start_center_m < 0 or end_center_m < 0:
+            raise ValueError("end centers must be >= 0")
+        x0 = float(start_center_m)
+        x1 = float(length_m - end_center_m)
+        if x0 > x1 + 1e-9:
+            return [x0, x1]
+
+        xs: list[float] = []
+        x = x0
+        while x <= x1 + 1e-9:
+            xs.append(float(x))
+            x += float(spacing_m)
+        if xs and xs[-1] < x1 - 1e-6:
+            xs.append(float(x1))
+        return xs
+
+    def _add_studs_along_segment(
+        *,
+        storey: Any,
+        name_prefix: str,
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+        elevation_m: float,
+        height_m: float,
+        sheathing_thk_m: float,
+        stud_thk_m: float,
+        stud_depth_m: float,
+        spacing_m: float,
+        skip_ranges_m: list[tuple[float, float]] | None = None,
+        center_offset_m: float | None = None,
+        positions_m: list[float] | None = None,
+        predefined_type: str = "STUD",
+        ifc_class: str = "IfcMember",
+        material: str = "SPF",
+    ) -> list[Any]:
+        """
+        Create vertical framing members along a wall segment.
+
+        Notes:
+        - `p1`/`p2` are in model XY (global) coordinates.
+        - Studs are offset to the "left" of the segment direction (CCW perimeter = inward).
+        - Skip ranges are measured along the segment axis from `p1` (used for openings).
+        """
+        skip_ranges = skip_ranges_m or []
+        p1v = np.array(p1, dtype=float)
+        p2v = np.array(p2, dtype=float)
+        axis = p2v - p1v
+        length = float(np.linalg.norm(axis))
+        if length < 1e-9:
+            return []
+        u = axis / length
+        inward = np.array((-u[1], u[0]), dtype=float)  # left-perp
+        center_offset = float(center_offset_m) if center_offset_m is not None else float(sheathing_thk_m + stud_depth_m / 2.0)
+        x_axis_hint = (float(u[0]), float(u[1]), 0.0)
+
+        studs: list[Any] = []
+        distances = positions_m if positions_m is not None else _positions_0_to_length(length, spacing_m)
+        for i, d in enumerate(distances, start=1):
+            if any((a - 1e-6) <= d <= (b + 1e-6) for (a, b) in skip_ranges):
+                continue
+            c = p1v + u * float(d) + inward * center_offset
+            stud = add_rect_member_between_points(
+                f,
+                context=contexts.body,
+                storey=storey,
+                name=f"{name_prefix} {i:03d}",
+                p1=(float(c[0]), float(c[1]), float(elevation_m)),
+                p2=(float(c[0]), float(c[1]), float(elevation_m + height_m)),
+                width=float(stud_thk_m),
+                depth=float(stud_depth_m),
+                predefined_type=predefined_type,
+                ifc_class=ifc_class,
+                x_axis_hint=x_axis_hint,
+                points_are_storey_relative=False,
+            )
+            studs.append(stud)
+            _bom_add_item(
+                category="studs",
+                material=material,
+                thickness_in=float(stud_thk_m) / inch(1.0),
+                depth_in=float(stud_depth_m) / inch(1.0),
+                length_in=float(height_m) / inch(1.0),
+                count=1,
+            )
+        return studs
+
+    def _add_elemented_wall_container(
+        *,
+        storey: Any,
+        name: str,
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+        elevation_m: float,
+    ) -> Any:
+        """Create an `IfcWall` container (no geometry) intended to be decomposed into stud members."""
+        wall = ifcopenshell.api.run(
+            "root.create_entity",
+            f,
+            ifc_class="IfcWall",
+            predefined_type="ELEMENTEDWALL",
+            name=name,
+        )
+        ifcopenshell.api.run("spatial.assign_container", f, products=[wall], relating_structure=storey)
+
+        p1_ = np.array(p1, dtype=float)
+        p2_ = np.array(p2, dtype=float)
+        v = p2_ - p1_
+        length = float(np.linalg.norm(v))
+        if length < 1e-12:
+            raise ValueError(f"Wall `{name}` has zero length")
+        v /= length
+
+        matrix = np.array(
+            [
+                [v[0], -v[1], 0.0, p1_[0]],
+                [v[1], v[0], 0.0, p1_[1]],
+                [0.0, 0.0, 1.0, float(elevation_m)],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        )
+        ifcopenshell.api.run("geometry.edit_object_placement", f, product=wall, matrix=matrix)
+        return wall
+
+    def _add_framing_assembly_container(*, storey: Any, name: str) -> Any:
+        """Create an `IfcElementAssembly` container (no geometry) intended to decompose framing parts."""
+        asm = ifcopenshell.api.run(
+            "root.create_entity",
+            f,
+            ifc_class="IfcElementAssembly",
+            predefined_type="USERDEFINED",
+            name=name,
+        )
+        ifcopenshell.api.run("spatial.assign_container", f, products=[asm], relating_structure=storey)
+        ifcopenshell.api.run("geometry.edit_object_placement", f, product=asm, matrix=translation_matrix())
+        return asm
+
+    def _add_plate_between_points(
+        *,
+        storey: Any,
+        name: str,
+        p1: tuple[float, float],
+        p2: tuple[float, float],
+        z_center_m: float,
+        sheathing_thk_m: float,
+        plate_depth_m: float,
+        plate_thk_m: float,
+        material: str = "SPF",
+    ) -> Any:
+        p1v = np.array(p1, dtype=float)
+        p2v = np.array(p2, dtype=float)
+        axis = p2v - p1v
+        length = float(np.linalg.norm(axis))
+        if length < 1e-9:
+            raise ValueError(f"Plate `{name}` has zero length")
+        u = axis / length
+        inward = np.array((-u[1], u[0]), dtype=float)  # left-perp
+        center_offset = float(sheathing_thk_m + plate_depth_m / 2.0)
+        p1o = p1v + inward * center_offset
+        p2o = p2v + inward * center_offset
+        plate = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=storey,
+            name=name,
+            p1=(float(p1o[0]), float(p1o[1]), float(z_center_m)),
+            p2=(float(p2o[0]), float(p2o[1]), float(z_center_m)),
+            width=float(plate_thk_m),
+            depth=float(plate_depth_m),
+            predefined_type="PLATE",
+            ifc_class="IfcMember",
+            x_axis_hint=(0.0, 0.0, 1.0),
+            points_are_storey_relative=False,
+        )
+        assign_surface_style(f, element=plate, style=framing_wood_style)
+        _bom_add_item(
+            category="plates",
+            material=material,
+            thickness_in=float(plate_thk_m) / inch(1.0),
+            depth_in=float(plate_depth_m) / inch(1.0),
+            length_in=float(length) / inch(1.0),
+            count=1,
+        )
+        return plate
+
+    def _bom_add_rect_member(
+        *,
+        category: str,
+        material: str,
+        width_m: float,
+        depth_m: float,
+        p1: tuple[float, float, float],
+        p2: tuple[float, float, float],
+    ) -> None:
+        length_m = float(np.linalg.norm(np.array(p2, dtype=float) - np.array(p1, dtype=float)))
+        _bom_add_item(
+            category=category,
+            material=material,
+            thickness_in=float(width_m) / inch(1.0),
+            depth_in=float(depth_m) / inch(1.0),
+            length_in=length_m / inch(1.0),
+            count=1,
+        )
+
     def add_layered_wall_segments(
         *,
         storey: Any,
@@ -766,12 +1029,15 @@ def build_catlin_house_ifc(
         segments: list[tuple[tuple[float, float], tuple[float, float]]],
         label: str,
     ) -> dict[str, list[Any]]:
-        created: dict[str, list[Any]] = {"studs": [], "sheathing": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
+        created: dict[str, list[Any]] = {"studs": [], "sheathing": [], "drywall": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
         overlap_m = inch(4.5)
         for i, (p1, p2) in enumerate(segments, start=1):
+            wall_asm = _add_framing_assembly_container(storey=storey, name=f"House {label} Wall Assembly {i}")
             p1_arr = np.array(p1, dtype=float)
             p2_arr = np.array(p2, dtype=float)
             v = p2_arr - p1_arr
+            # House design note: exterior N-S walls (east + west) are load-bearing.
+            is_load_bearing = abs(float(v[0])) < abs(float(v[1]))
             v_norm = v / (np.linalg.norm(v) + 1e-9)
             p1_outer = tuple(p1_arr - overlap_m * v_norm)
             p2_outer = tuple(p2_arr + overlap_m * v_norm)
@@ -789,24 +1055,168 @@ def build_catlin_house_ifc(
                 direction_sense="POSITIVE",  # into house
                 offset=0.0,  # starts at outer face
             )
-            studs = add_wall_between_points(
+            drywall = add_wall_between_points(
                 f,
                 context=contexts.body,
                 storey=storey,
-                name=f"House {label} Stud Wall {i}",
+                name=f"House {label} Interior Drywall {i}",
                 p1=p1,
                 p2=p2,
                 elevation=elevation_m,
                 height=height_m,
-                thickness=stud_depth_m,
+                thickness=drywall_thk_m,
                 direction_sense="POSITIVE",  # into house
-                offset=wall_sheathing_m,  # behind sheathing
+                offset=wall_sheathing_m + stud_depth_m,  # inside face of studs
             )
-            assign_surface_style(f, element=studs, style=framing_wood_style)
-    
+            created["drywall"].append(drywall)
+            assign_to_group(f, group=groups["Drywall"], products=[drywall])
+            assign_surface_style(f, element=drywall, style=drywall_style)
+            if include_wall_studs:
+                seg_len_m = float(np.linalg.norm(v))
+                stud_thk_m = inch(1.5)
+                corner_lvl_thk_m = inch(1.75)
+                end_thk_m = corner_lvl_thk_m if is_load_bearing else stud_thk_m
+
+                plate_thk_m = inch(1.5)
+                top_plate_count = 2
+                stud_z0_m = float(elevation_m + (plate_thk_m if include_wall_plates else 0.0))
+                stud_z1_m = float(elevation_m + height_m - ((top_plate_count * plate_thk_m) if include_wall_plates else 0.0))
+                stud_h_m = float(stud_z1_m - stud_z0_m)
+
+                positions = _positions_with_end_centers(
+                    seg_len_m,
+                    inch(spec.framing_spacing_in),
+                    start_center_m=float(end_thk_m / 2.0),
+                    end_center_m=float(end_thk_m / 2.0),
+                )
+
+                studs: list[Any] = []
+                if is_load_bearing and len(positions) >= 2:
+                    lvl_positions = [positions[0], positions[-1]]
+                    interior_positions = positions[1:-1]
+                    lvl = _add_studs_along_segment(
+                        storey=storey,
+                        name_prefix=f"House {label} Corner LVL S{i}",
+                        p1=p1,
+                        p2=p2,
+                        elevation_m=stud_z0_m,
+                        height_m=stud_h_m,
+                        sheathing_thk_m=wall_sheathing_m,
+                        stud_thk_m=corner_lvl_thk_m,
+                        stud_depth_m=stud_depth_m,
+                        spacing_m=inch(spec.framing_spacing_in),
+                        positions_m=lvl_positions,
+                        predefined_type="POST",
+                        ifc_class="IfcMember",
+                        material="LVL",
+                    )
+                    studs.extend(lvl)
+                    if interior_positions:
+                        studs.extend(
+                            _add_studs_along_segment(
+                                storey=storey,
+                                name_prefix=f"House {label} Stud S{i}",
+                                p1=p1,
+                                p2=p2,
+                                elevation_m=stud_z0_m,
+                                height_m=stud_h_m,
+                                sheathing_thk_m=wall_sheathing_m,
+                                stud_thk_m=stud_thk_m,
+                                stud_depth_m=stud_depth_m,
+                                spacing_m=inch(spec.framing_spacing_in),
+                                positions_m=interior_positions,
+                                predefined_type="STUD",
+                                ifc_class="IfcMember",
+                                material="SPF",
+                            )
+                        )
+                else:
+                    studs = _add_studs_along_segment(
+                        storey=storey,
+                        name_prefix=f"House {label} Stud S{i}",
+                        p1=p1,
+                        p2=p2,
+                        elevation_m=stud_z0_m,
+                        height_m=stud_h_m,
+                        sheathing_thk_m=wall_sheathing_m,
+                        stud_thk_m=stud_thk_m,
+                        stud_depth_m=stud_depth_m,
+                        spacing_m=inch(spec.framing_spacing_in),
+                        positions_m=positions,
+                        predefined_type="STUD",
+                        ifc_class="IfcMember",
+                        material="SPF",
+                    )
+
+                for stud in studs:
+                    assign_surface_style(f, element=stud, style=framing_wood_style)
+                created["studs"].extend(studs)
+
+                stud_wall = _add_elemented_wall_container(
+                    storey=storey,
+                    name=f"House {label} Stud Wall {i}",
+                    p1=p1,
+                    p2=p2,
+                    elevation_m=elevation_m,
+                )
+                ifcopenshell.api.run("aggregate.assign_object", f, products=studs, relating_object=stud_wall)
+                assign_to_group(f, group=groups["Framing"], products=[stud_wall])
+                framing_container = stud_wall
+                if include_wall_plates:
+                    plate_thk_m = inch(1.5)
+                    bottom = _add_plate_between_points(
+                        storey=storey,
+                        name=f"House {label} Plate Bottom {i}",
+                        p1=p1,
+                        p2=p2,
+                        z_center_m=float(elevation_m + plate_thk_m / 2.0),
+                        sheathing_thk_m=wall_sheathing_m,
+                        plate_depth_m=stud_depth_m,
+                        plate_thk_m=plate_thk_m,
+                    )
+                    top1 = _add_plate_between_points(
+                        storey=storey,
+                        name=f"House {label} Plate Top 1 {i}",
+                        p1=p1,
+                        p2=p2,
+                        z_center_m=float(elevation_m + height_m - 1.5 * plate_thk_m),
+                        sheathing_thk_m=wall_sheathing_m,
+                        plate_depth_m=stud_depth_m,
+                        plate_thk_m=plate_thk_m,
+                    )
+                    top2 = _add_plate_between_points(
+                        storey=storey,
+                        name=f"House {label} Plate Top 2 {i}",
+                        p1=p1,
+                        p2=p2,
+                        z_center_m=float(elevation_m + height_m - plate_thk_m / 2.0),
+                        sheathing_thk_m=wall_sheathing_m,
+                        plate_depth_m=stud_depth_m,
+                        plate_thk_m=plate_thk_m,
+                    )
+                    ifcopenshell.api.run("aggregate.assign_object", f, products=[bottom, top1, top2], relating_object=stud_wall)
+                    scope_key = f"House {label} perimeter"
+                    bom["scopes"]["plates"][scope_key] = int(bom["scopes"]["plates"].get(scope_key, 0)) + 3
+            else:
+                studs = add_wall_between_points(
+                    f,
+                    context=contexts.body,
+                    storey=storey,
+                    name=f"House {label} Stud Wall {i}",
+                    p1=p1,
+                    p2=p2,
+                    elevation=elevation_m,
+                    height=height_m,
+                    thickness=stud_depth_m,
+                    direction_sense="POSITIVE",  # into house
+                    offset=wall_sheathing_m,  # behind sheathing
+                )
+                assign_surface_style(f, element=studs, style=framing_wood_style)
+                created["studs"].append(studs)
+                framing_container = studs
+
             created["sheathing"].append(sheathing)
-            created["studs"].append(studs)
-    
+
             # Outside of sheathing: polyiso + eps + furring + standing seam (stacked outward).
             outward_offset = 0.0
     
@@ -874,6 +1284,37 @@ def build_catlin_house_ifc(
             created["eps"].append(eps)
             created["furring"].append(furring)
             created["metal"].append(metal)
+
+            ifcopenshell.api.run(
+                "aggregate.assign_object",
+                f,
+                products=[framing_container, sheathing, drywall, polyiso, eps, furring, metal],
+                relating_object=wall_asm,
+            )
+            assign_to_group(f, group=groups["Framing"], products=[wall_asm])
+            set_pset_json(
+                f,
+                product=wall_asm,
+                pset_name="Pset_ifcPlot_Framing",
+                prop_name="FramingJSON",
+                value={
+                    "kind": "ExteriorWallAssembly",
+                    "label": label,
+                    "segment_index": i,
+                    "bearing": bool(is_load_bearing),
+                    "segment_length_in": float(np.linalg.norm(v)) / inch(1.0),
+                    "stud_spacing_in": float(spec.framing_spacing_in),
+                    "stud_depth_in": float(stud_depth_m) / inch(1.0),
+                    "stud_thickness_in": 1.5,
+                    "corner_end_post": {
+                        "material": "LVL" if is_load_bearing else "SPF",
+                        "thickness_in": 1.75 if is_load_bearing else 1.5,
+                    },
+                    "plates": {"thickness_in": 1.5, "bottom_count": 1, "top_count": 2} if include_wall_plates else None,
+                    "drywall_in": 0.625,
+                    "openings": [],
+                },
+            )
     
         assign_to_group(f, group=groups["Framing"], products=[*created["studs"], *created["sheathing"]])
         assign_to_group(f, group=groups["Cladding"], products=[*created["polyiso"], *created["eps"], *created["furring"], *created["metal"]])
@@ -885,6 +1326,11 @@ def build_catlin_house_ifc(
             assign_surface_style(f, element=elem, style=eps_style)
         for elem in created["furring"]:
             assign_surface_style(f, element=elem, style=framing_wood_style)
+        if include_wall_studs:
+            studs_group = ifcopenshell.api.run("group.add_group", f, name=f"House {label} Wall Studs")
+            assign_to_group(f, group=studs_group, products=created["studs"])
+            scope_key = f"House {label} perimeter"
+            bom["scopes"]["studs"][scope_key] = int(bom["scopes"]["studs"].get(scope_key, 0)) + len(created["studs"])
         return created
     perimeter_segments = [
         ((hx(0.0), hy(0.0)), (hx(house_size_m), hy(0.0))),  # south (eastward)
@@ -920,6 +1366,7 @@ def build_catlin_house_ifc(
     attic_knee_layers: dict[str, list[Any]] = {"studs": [], "sheathing": [], "polyiso": [], "eps": [], "furring": [], "metal": []}
     overlap_m = inch(4.5)
     for i, (p1, p2) in enumerate(attic_knee_segments, start=1):
+        knee_wall_asm = _add_framing_assembly_container(storey=house_attic, name=f"House Attic Knee Wall Assembly {i}")
         p1_arr = np.array(p1, dtype=float)
         p2_arr = np.array(p2, dtype=float)
         v = p2_arr - p1_arr
@@ -940,19 +1387,117 @@ def build_catlin_house_ifc(
             direction_sense="POSITIVE",  # into house
             offset=0.0,  # starts at outer face
         )
-        studs = add_wall_between_points(
+        drywall = add_wall_between_points(
             f,
             context=contexts.body,
             storey=house_attic,
-            name=f"House Attic Knee Stud Wall {i}",
+            name=f"House Attic Knee Interior Drywall {i}",
             p1=p1,
             p2=p2,
             elevation=attic_elev_m,
             height=attic_knee_height_m,
-            thickness=inch(3.5),
+            thickness=drywall_thk_m,
             direction_sense="POSITIVE",  # into house
-            offset=wall_sheathing_m,  # behind sheathing
+            offset=wall_sheathing_m + inch(3.5),
         )
+        assign_to_group(f, group=groups["Drywall"], products=[drywall])
+        assign_surface_style(f, element=drywall, style=drywall_style)
+        if include_wall_studs:
+            seg_len_m = float(np.linalg.norm(v))
+            stud_thk_m = inch(1.5)
+            positions = _positions_with_end_centers(
+                seg_len_m,
+                inch(spec.framing_spacing_in),
+                start_center_m=float(stud_thk_m / 2.0),
+                end_center_m=float(stud_thk_m / 2.0),
+            )
+            plate_thk_m = inch(1.5)
+            top_plate_count = 2
+            stud_z0_m = float(attic_elev_m + (plate_thk_m if include_wall_plates else 0.0))
+            stud_z1_m = float(attic_elev_m + attic_knee_height_m - ((top_plate_count * plate_thk_m) if include_wall_plates else 0.0))
+            stud_h_m = float(stud_z1_m - stud_z0_m)
+            studs = _add_studs_along_segment(
+                storey=house_attic,
+                name_prefix=f"House Attic Knee Stud S{i}",
+                p1=p1,
+                p2=p2,
+                elevation_m=stud_z0_m,
+                height_m=stud_h_m,
+                sheathing_thk_m=wall_sheathing_m,
+                stud_thk_m=stud_thk_m,
+                stud_depth_m=inch(3.5),
+                spacing_m=inch(spec.framing_spacing_in),
+                positions_m=positions,
+                predefined_type="STUD",
+                ifc_class="IfcMember",
+                material="SPF",
+            )
+            for stud in studs:
+                assign_surface_style(f, element=stud, style=framing_wood_style)
+            attic_knee_layers["studs"].extend(studs)
+
+            knee_stud_wall = _add_elemented_wall_container(
+                storey=house_attic,
+                name=f"House Attic Knee Stud Wall {i}",
+                p1=p1,
+                p2=p2,
+                elevation_m=attic_elev_m,
+            )
+            ifcopenshell.api.run("aggregate.assign_object", f, products=studs, relating_object=knee_stud_wall)
+            assign_to_group(f, group=groups["Framing"], products=[knee_stud_wall])
+            knee_framing_container = knee_stud_wall
+            if include_wall_plates:
+                plate_thk_m = inch(1.5)
+                bottom = _add_plate_between_points(
+                    storey=house_attic,
+                    name=f"House Attic Knee Plate Bottom {i}",
+                    p1=p1,
+                    p2=p2,
+                    z_center_m=float(attic_elev_m + plate_thk_m / 2.0),
+                    sheathing_thk_m=wall_sheathing_m,
+                    plate_depth_m=inch(3.5),
+                    plate_thk_m=plate_thk_m,
+                )
+                top1 = _add_plate_between_points(
+                    storey=house_attic,
+                    name=f"House Attic Knee Plate Top 1 {i}",
+                    p1=p1,
+                    p2=p2,
+                    z_center_m=float(attic_elev_m + attic_knee_height_m - 1.5 * plate_thk_m),
+                    sheathing_thk_m=wall_sheathing_m,
+                    plate_depth_m=inch(3.5),
+                    plate_thk_m=plate_thk_m,
+                )
+                top2 = _add_plate_between_points(
+                    storey=house_attic,
+                    name=f"House Attic Knee Plate Top 2 {i}",
+                    p1=p1,
+                    p2=p2,
+                    z_center_m=float(attic_elev_m + attic_knee_height_m - plate_thk_m / 2.0),
+                    sheathing_thk_m=wall_sheathing_m,
+                    plate_depth_m=inch(3.5),
+                    plate_thk_m=plate_thk_m,
+                )
+                ifcopenshell.api.run("aggregate.assign_object", f, products=[bottom, top1, top2], relating_object=knee_stud_wall)
+                scope_key = "House Attic knee"
+                bom["scopes"]["plates"][scope_key] = int(bom["scopes"]["plates"].get(scope_key, 0)) + 3
+        else:
+            studs = add_wall_between_points(
+                f,
+                context=contexts.body,
+                storey=house_attic,
+                name=f"House Attic Knee Stud Wall {i}",
+                p1=p1,
+                p2=p2,
+                elevation=attic_elev_m,
+                height=attic_knee_height_m,
+                thickness=inch(3.5),
+                direction_sense="POSITIVE",  # into house
+                offset=wall_sheathing_m,  # behind sheathing
+            )
+            assign_surface_style(f, element=studs, style=framing_wood_style)
+            attic_knee_layers["studs"].append(studs)
+            knee_framing_container = studs
 
         outward_offset = 0.0
         polyiso = add_wall_between_points(
@@ -1016,16 +1561,44 @@ def build_catlin_house_ifc(
         assign_surface_style(f, element=metal, style=standing_seam_style)
 
         attic_knee_layers["sheathing"].append(sheathing)
-        attic_knee_layers["studs"].append(studs)
         attic_knee_layers["polyiso"].append(polyiso)
         attic_knee_layers["eps"].append(eps)
         attic_knee_layers["furring"].append(furring)
         attic_knee_layers["metal"].append(metal)
 
+        ifcopenshell.api.run(
+            "aggregate.assign_object",
+            f,
+            products=[knee_framing_container, sheathing, drywall, polyiso, eps, furring, metal],
+            relating_object=knee_wall_asm,
+        )
+        assign_to_group(f, group=groups["Framing"], products=[knee_wall_asm])
+        set_pset_json(
+            f,
+            product=knee_wall_asm,
+            pset_name="Pset_ifcPlot_Framing",
+            prop_name="FramingJSON",
+            value={
+                "kind": "AtticKneeWallAssembly",
+                "segment_index": i,
+                "bearing": False,
+                "segment_length_in": float(np.linalg.norm(v)) / inch(1.0),
+                "stud_spacing_in": float(spec.framing_spacing_in),
+                "stud_depth_in": 3.5,
+                "stud_thickness_in": 1.5,
+                "plates": {"thickness_in": 1.5, "bottom_count": 1, "top_count": 2} if include_wall_plates else None,
+                "drywall_in": 0.625,
+                "openings": [],
+            },
+        )
+
     assign_to_group(f, group=groups["Framing"], products=[*attic_knee_layers["studs"], *attic_knee_layers["sheathing"]])
     assign_to_group(f, group=groups["Cladding"], products=[*attic_knee_layers["polyiso"], *attic_knee_layers["eps"], *attic_knee_layers["furring"], *attic_knee_layers["metal"]])
-    for elem in attic_knee_layers["studs"]:
-        assign_surface_style(f, element=elem, style=framing_wood_style)
+    if include_wall_studs:
+        knee_studs_group = ifcopenshell.api.run("group.add_group", f, name="House Attic Knee Wall Studs")
+        assign_to_group(f, group=knee_studs_group, products=attic_knee_layers["studs"])
+        scope_key = "House Attic knee"
+        bom["scopes"]["studs"][scope_key] = int(bom["scopes"]["studs"].get(scope_key, 0)) + len(attic_knee_layers["studs"])
     for elem in attic_knee_layers["sheathing"]:
         assign_surface_style(f, element=elem, style=sheathing_style)
     for elem in attic_knee_layers["polyiso"]:
@@ -1112,7 +1685,19 @@ def build_catlin_house_ifc(
             placement_matrix=shifted_along_thickness(base_matrix, float(wall_sheathing_m)),
         )
         assign_surface_style(f, element=studs, style=framing_wood_style)
+        drywall = add_prism_from_profile(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            ifc_class="IfcWall",
+            name=f"House Attic {label} Interior Drywall",
+            profile_points=gable_framing_profile,
+            depth=float(drywall_thk_m),
+            placement_matrix=shifted_along_thickness(base_matrix, float(wall_sheathing_m + inch(3.5))),
+        )
+        assign_surface_style(f, element=drywall, style=drywall_style)
         assign_to_group(f, group=groups["Framing"], products=[sheathing, studs])
+        assign_to_group(f, group=groups["Drywall"], products=[drywall])
 
     south_gable_matrix = placement_matrix(
         origin=(0.0, 0.0, 0.0),
@@ -1168,6 +1753,89 @@ def build_catlin_house_ifc(
     for wall in centerline_walls:
         assign_surface_style(f, element=wall, style=framing_wood_style)
 
+    if include_wall_studs:
+        centerline_seg = ((hx(grid_m), hy(0.0)), (hx(grid_m), hy(house_size_m)))
+        centerline_studs: list[Any] = []
+        for wall, storey, elev_m, height_m, label in [
+            (centerline_walls[0], house_main, main_elev_m, ft(spec.main_storey_height_ft), "Main"),
+            (centerline_walls[1], house_second, second_elev_m, ft(spec.second_storey_height_ft), "Second"),
+            (centerline_walls[2], house_attic, attic_elev_m, ft(spec.attic_ridge_height_above_floor_ft), "Attic"),
+        ]:
+            seg_len_m = float(np.linalg.norm(np.array(centerline_seg[1], dtype=float) - np.array(centerline_seg[0], dtype=float)))
+            stud_thk_m = inch(1.5)
+            positions = _positions_with_end_centers(
+                seg_len_m,
+                inch(spec.framing_spacing_in),
+                start_center_m=float(stud_thk_m / 2.0),
+                end_center_m=float(stud_thk_m / 2.0),
+            )
+            plate_thk_m = inch(1.5)
+            top_plate_count = 2
+            stud_z0_m = float(elev_m + (plate_thk_m if include_wall_plates else 0.0))
+            stud_z1_m = float(elev_m + height_m - ((top_plate_count * plate_thk_m) if include_wall_plates else 0.0))
+            stud_h_m = float(stud_z1_m - stud_z0_m)
+            studs = _add_studs_along_segment(
+                storey=storey,
+                name_prefix=f"House Centerline Stud ({label})",
+                p1=centerline_seg[0],
+                p2=centerline_seg[1],
+                elevation_m=stud_z0_m,
+                height_m=stud_h_m,
+                sheathing_thk_m=0.0,
+                stud_thk_m=stud_thk_m,
+                stud_depth_m=center_wall_thk_m,
+                spacing_m=inch(spec.framing_spacing_in),
+                center_offset_m=0.0,
+                positions_m=positions,
+                predefined_type="STUD",
+                ifc_class="IfcMember",
+                material="SPF",
+            )
+            for stud in studs:
+                assign_surface_style(f, element=stud, style=framing_wood_style)
+            centerline_studs.extend(studs)
+            scope_key = f"House Centerline ({label})"
+            bom["scopes"]["studs"][scope_key] = int(bom["scopes"]["studs"].get(scope_key, 0)) + len(studs)
+            ifcopenshell.api.run("aggregate.assign_object", f, products=studs, relating_object=wall)
+            if include_wall_plates:
+                plate_thk_m = inch(1.5)
+                bottom = _add_plate_between_points(
+                    storey=storey,
+                    name=f"House Centerline Plate Bottom ({label})",
+                    p1=centerline_seg[0],
+                    p2=centerline_seg[1],
+                    z_center_m=float(elev_m + plate_thk_m / 2.0),
+                    sheathing_thk_m=0.0,
+                    plate_depth_m=center_wall_thk_m,
+                    plate_thk_m=plate_thk_m,
+                )
+                top1 = _add_plate_between_points(
+                    storey=storey,
+                    name=f"House Centerline Plate Top 1 ({label})",
+                    p1=centerline_seg[0],
+                    p2=centerline_seg[1],
+                    z_center_m=float(elev_m + height_m - 1.5 * plate_thk_m),
+                    sheathing_thk_m=0.0,
+                    plate_depth_m=center_wall_thk_m,
+                    plate_thk_m=plate_thk_m,
+                )
+                top2 = _add_plate_between_points(
+                    storey=storey,
+                    name=f"House Centerline Plate Top 2 ({label})",
+                    p1=centerline_seg[0],
+                    p2=centerline_seg[1],
+                    z_center_m=float(elev_m + height_m - plate_thk_m / 2.0),
+                    sheathing_thk_m=0.0,
+                    plate_depth_m=center_wall_thk_m,
+                    plate_thk_m=plate_thk_m,
+                )
+                ifcopenshell.api.run("aggregate.assign_object", f, products=[bottom, top1, top2], relating_object=wall)
+                scope_key = f"House Centerline ({label})"
+                bom["scopes"]["plates"][scope_key] = int(bom["scopes"]["plates"].get(scope_key, 0)) + 3
+        assign_to_group(f, group=groups["Framing"], products=centerline_studs)
+        centerline_studs_group = ifcopenshell.api.run("group.add_group", f, name="House Centerline Wall Studs")
+        assign_to_group(f, group=centerline_studs_group, products=centerline_studs)
+
     # Floor joists (IFC framing members): 16" o.c. spanning between side walls and the centerline wall.
     spacing_m = inch(spec.framing_spacing_in)
     joist_w_m = inch(spec.floor_joist_width_in)
@@ -1189,64 +1857,74 @@ def build_catlin_house_ifc(
     for i, y in enumerate(y_positions_m(), start=1):
         # Joists relative to storey (elevations are local)
         z_center_second = -joist_d_m / 2.0
-        second_floor_joists.append(
-            add_rect_member_between_points(
-                f,
-                context=contexts.body,
-                storey=house_second,
-                name=f"House Second Floor Joist W-{i:02d}",
-                p1=(0.0, y, float(z_center_second)),
-                p2=(grid_m, y, float(z_center_second)),
-                width=joist_w_m,
-                depth=joist_d_m,
-                predefined_type="JOIST",
-                ifc_class="IfcBeam",
-            )
+        p1_w = (0.0, y, float(z_center_second))
+        p2_w = (grid_m, y, float(z_center_second))
+        j_w = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=house_second,
+            name=f"House Second Floor Joist W-{i:02d}",
+            p1=p1_w,
+            p2=p2_w,
+            width=joist_w_m,
+            depth=joist_d_m,
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
         )
-        second_floor_joists.append(
-            add_rect_member_between_points(
-                f,
-                context=contexts.body,
-                storey=house_second,
-                name=f"House Second Floor Joist E-{i:02d}",
-                p1=(grid_m, y, float(z_center_second)),
-                p2=(house_size_m, y, float(z_center_second)),
-                width=joist_w_m,
-                depth=joist_d_m,
-                predefined_type="JOIST",
-                ifc_class="IfcBeam",
-            )
+        second_floor_joists.append(j_w)
+        _bom_add_rect_member(category="joists", material="I-Joist", width_m=joist_w_m, depth_m=joist_d_m, p1=p1_w, p2=p2_w)
+
+        p1_e = (grid_m, y, float(z_center_second))
+        p2_e = (house_size_m, y, float(z_center_second))
+        j_e = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=house_second,
+            name=f"House Second Floor Joist E-{i:02d}",
+            p1=p1_e,
+            p2=p2_e,
+            width=joist_w_m,
+            depth=joist_d_m,
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
         )
+        second_floor_joists.append(j_e)
+        _bom_add_rect_member(category="joists", material="I-Joist", width_m=joist_w_m, depth_m=joist_d_m, p1=p1_e, p2=p2_e)
 
         z_center_attic = -joist_d_m / 2.0
-        attic_floor_joists.append(
-            add_rect_member_between_points(
-                f,
-                context=contexts.body,
-                storey=house_attic,
-                name=f"House Attic Floor Joist W-{i:02d}",
-                p1=(0.0, y, float(z_center_attic)),
-                p2=(grid_m, y, float(z_center_attic)),
-                width=joist_w_m,
-                depth=joist_d_m,
-                predefined_type="JOIST",
-                ifc_class="IfcBeam",
-            )
+        p1_aw = (0.0, y, float(z_center_attic))
+        p2_aw = (grid_m, y, float(z_center_attic))
+        j_aw = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Floor Joist W-{i:02d}",
+            p1=p1_aw,
+            p2=p2_aw,
+            width=joist_w_m,
+            depth=joist_d_m,
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
         )
-        attic_floor_joists.append(
-            add_rect_member_between_points(
-                f,
-                context=contexts.body,
-                storey=house_attic,
-                name=f"House Attic Floor Joist E-{i:02d}",
-                p1=(grid_m, y, float(z_center_attic)),
-                p2=(house_size_m, y, float(z_center_attic)),
-                width=joist_w_m,
-                depth=joist_d_m,
-                predefined_type="JOIST",
-                ifc_class="IfcBeam",
-            )
+        attic_floor_joists.append(j_aw)
+        _bom_add_rect_member(category="joists", material="I-Joist", width_m=joist_w_m, depth_m=joist_d_m, p1=p1_aw, p2=p2_aw)
+
+        p1_ae = (grid_m, y, float(z_center_attic))
+        p2_ae = (house_size_m, y, float(z_center_attic))
+        j_ae = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Attic Floor Joist E-{i:02d}",
+            p1=p1_ae,
+            p2=p2_ae,
+            width=joist_w_m,
+            depth=joist_d_m,
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
         )
+        attic_floor_joists.append(j_ae)
+        _bom_add_rect_member(category="joists", material="I-Joist", width_m=joist_w_m, depth_m=joist_d_m, p1=p1_ae, p2=p2_ae)
 
     assign_to_group(f, group=groups["Framing"], products=[*second_floor_joists, *attic_floor_joists])
     for joist in [*second_floor_joists, *attic_floor_joists]:
@@ -1257,6 +1935,12 @@ def build_catlin_house_ifc(
     attic_floor_group = ifcopenshell.api.run("group.add_group", f, name="House Attic Floor Joists")
     assign_to_group(f, group=second_floor_group, products=second_floor_joists)
     assign_to_group(f, group=attic_floor_group, products=attic_floor_joists)
+    second_floor_asm = _add_framing_assembly_container(storey=house_second, name="House Second Floor Framing")
+    attic_floor_asm = _add_framing_assembly_container(storey=house_attic, name="House Attic Floor Framing")
+    ifcopenshell.api.run("aggregate.assign_object", f, products=second_floor_joists, relating_object=second_floor_asm)
+    ifcopenshell.api.run("aggregate.assign_object", f, products=attic_floor_joists, relating_object=attic_floor_asm)
+    bom["scopes"]["joists"]["House Second Floor"] = len(second_floor_joists)
+    bom["scopes"]["joists"]["House Attic Floor"] = len(attic_floor_joists)
 
     # ---- House Roof Assembly ---------------------------------------------------
     pitch = spec.roof_pitch_rise_over_run
@@ -1403,39 +2087,47 @@ def build_catlin_house_ifc(
         z_ridge_local = ridge_z_m - attic_elev_m
         z_eave_local = eave_z_m - attic_elev_m
 
-        roof_joists.append(
-            add_rect_member_between_points(
-                f,
-                context=contexts.body,
-                storey=house_attic,
-                name=f"House Roof Joist W-{i:02d}",
-                p1=(grid_m, y, float(z_ridge_local)),
-                p2=(0.0, y, float(z_eave_local)),
-                width=roof_joist_w_m,
-                depth=roof_joist_d_m,
-                predefined_type="JOIST",
-                ifc_class="IfcBeam",
-            )
+        p1_w = (grid_m, y, float(z_ridge_local))
+        p2_w = (0.0, y, float(z_eave_local))
+        r_w = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Roof Joist W-{i:02d}",
+            p1=p1_w,
+            p2=p2_w,
+            width=roof_joist_w_m,
+            depth=roof_joist_d_m,
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
         )
-        roof_joists.append(
-            add_rect_member_between_points(
-                f,
-                context=contexts.body,
-                storey=house_attic,
-                name=f"House Roof Joist E-{i:02d}",
-                p1=(grid_m, y, float(z_ridge_local)),
-                p2=(house_size_m, y, float(z_eave_local)),
-                width=roof_joist_w_m,
-                depth=roof_joist_d_m,
-                predefined_type="JOIST",
-                ifc_class="IfcBeam",
-            )
+        roof_joists.append(r_w)
+        _bom_add_rect_member(category="joists", material="I-Joist", width_m=roof_joist_w_m, depth_m=roof_joist_d_m, p1=p1_w, p2=p2_w)
+
+        p1_e = (grid_m, y, float(z_ridge_local))
+        p2_e = (house_size_m, y, float(z_eave_local))
+        r_e = add_rect_member_between_points(
+            f,
+            context=contexts.body,
+            storey=house_attic,
+            name=f"House Roof Joist E-{i:02d}",
+            p1=p1_e,
+            p2=p2_e,
+            width=roof_joist_w_m,
+            depth=roof_joist_d_m,
+            predefined_type="JOIST",
+            ifc_class="IfcBeam",
         )
+        roof_joists.append(r_e)
+        _bom_add_rect_member(category="joists", material="I-Joist", width_m=roof_joist_w_m, depth_m=roof_joist_d_m, p1=p1_e, p2=p2_e)
     assign_to_group(f, group=groups["Framing"], products=roof_joists)
     for joist in roof_joists:
         assign_surface_style(f, element=joist, style=framing_wood_style)
     roof_joist_group = ifcopenshell.api.run("group.add_group", f, name="House Roof Joists")
     assign_to_group(f, group=roof_joist_group, products=roof_joists)
+    roof_asm = _add_framing_assembly_container(storey=house_attic, name="House Roof Framing")
+    ifcopenshell.api.run("aggregate.assign_object", f, products=roof_joists, relating_object=roof_asm)
+    bom["scopes"]["joists"]["House Roof"] = len(roof_joists)
 
     # Detail parameters stored on the roof (for IFC-driven detail scripts).
     roof_detail_params = {
@@ -1874,14 +2566,17 @@ def build_catlin_house_ifc(
     span_y0_m = y_north_in_m
     span_y1_m = y_box_south_in_m
     z_center_porch_joist = porch_floor_top_m - deck_thk_m - joist_d_m / 2.0
+    porch_joists: list[Any] = []
     for i, x_m in enumerate(x_positions(x_in0_m, x_in1_m), start=1):
+        p1_j = (hx(x_m), hy(span_y0_m), float(z_center_porch_joist))
+        p2_j = (hx(x_m), hy(span_y1_m), float(z_center_porch_joist))
         joist = add_rect_member_between_points(
             f,
             context=contexts.body,
             storey=porch_main,
             name=f"Porch Joist {i:02d}",
-            p1=(hx(x_m), hy(span_y0_m), float(z_center_porch_joist)),
-            p2=(hx(x_m), hy(span_y1_m), float(z_center_porch_joist)),
+            p1=p1_j,
+            p2=p2_j,
             width=float(joist_w_m),
             depth=float(joist_d_m),
             predefined_type="JOIST",
@@ -1890,17 +2585,22 @@ def build_catlin_house_ifc(
             points_are_storey_relative=False,
         )
         sg_framing.append(joist)
+        porch_joists.append(joist)
+        _bom_add_rect_member(category="joists", material="Lumber", width_m=float(joist_w_m), depth_m=float(joist_d_m), p1=p1_j, p2=p2_j)
 
     # Deck joists at the second-storey deck level (placeholder framing, no slope yet).
     z_center_deck_joist = deck_floor_top_m - deck_thk_m - joist_d_m / 2.0
+    deck_joists: list[Any] = []
     for i, x_m in enumerate(x_positions(x_in0_m, x_in1_m), start=1):
+        p1_j = (hx(x_m), hy(span_y0_m), float(z_center_deck_joist))
+        p2_j = (hx(x_m), hy(span_y1_m), float(z_center_deck_joist))
         joist = add_rect_member_between_points(
             f,
             context=contexts.body,
             storey=porch_deck,
             name=f"Deck Joist {i:02d}",
-            p1=(hx(x_m), hy(span_y0_m), float(z_center_deck_joist)),
-            p2=(hx(x_m), hy(span_y1_m), float(z_center_deck_joist)),
+            p1=p1_j,
+            p2=p2_j,
             width=float(joist_w_m),
             depth=float(joist_d_m),
             predefined_type="JOIST",
@@ -1909,6 +2609,15 @@ def build_catlin_house_ifc(
             points_are_storey_relative=False,
         )
         sg_framing.append(joist)
+        deck_joists.append(joist)
+        _bom_add_rect_member(category="joists", material="Lumber", width_m=float(joist_w_m), depth_m=float(joist_d_m), p1=p1_j, p2=p2_j)
+
+    bom["scopes"]["joists"]["Porch"] = len(porch_joists)
+    bom["scopes"]["joists"]["Deck"] = len(deck_joists)
+    porch_asm = _add_framing_assembly_container(storey=porch_main, name="Porch Framing")
+    deck_asm = _add_framing_assembly_container(storey=porch_deck, name="Deck Framing")
+    ifcopenshell.api.run("aggregate.assign_object", f, products=porch_joists, relating_object=porch_asm)
+    ifcopenshell.api.run("aggregate.assign_object", f, products=deck_joists, relating_object=deck_asm)
 
     porch_floor_deck = add_prism_from_profile(
         f,
@@ -2167,7 +2876,11 @@ def build_catlin_house_ifc(
         
         # Inward layers
         inward_offset = 0.0
-        for layer_name, layer_thickness, style in [("Zip-R Sheathing", zip_r_m, sheathing_style), ("Stud Wall", stud_m, framing_wood_style), ("Interior Drywall", drywall_m, drywall_style)]:
+        inward_layers: list[tuple[str, float, Any]] = [("Zip-R Sheathing", zip_r_m, sheathing_style)]
+        if not include_wall_studs:
+            inward_layers.append(("Stud Wall", stud_m, framing_wood_style))
+        inward_layers.append(("Interior Drywall", drywall_m, drywall_style))
+        for layer_name, layer_thickness, style in inward_layers:
             if wall_is_west:
                 # Shift origin by inward_offset along the extrusion direction (z_axis)
                 z_axis = np.array((-v_norm[1], v_norm[0], 0.0))
@@ -2194,6 +2907,117 @@ def build_catlin_house_ifc(
             else: garage_wall_drywall.append(wall)
             assign_surface_style(f, element=wall, style=style)
             inward_offset += layer_thickness
+
+        if include_wall_studs:
+            skip = None
+            if wall_is_west and wood_opening_h > 0:
+                skip = [(float(door_side_offset_m), float(door_side_offset_m + door_width_m))]
+            stud_thk_m = inch(1.5)
+            positions = _positions_with_end_centers(
+                float(length),
+                inch(spec.framing_spacing_in),
+                start_center_m=float(stud_thk_m / 2.0),
+                end_center_m=float(stud_thk_m / 2.0),
+            )
+            plate_thk_m = inch(1.5)
+            top_plate_count = 2
+            stud_z0_m = float(wood_wall_elev_m + (plate_thk_m if include_wall_plates else 0.0))
+            stud_z1_m = float(wood_wall_elev_m + wood_wall_h_m - ((top_plate_count * plate_thk_m) if include_wall_plates else 0.0))
+            stud_h_m = float(stud_z1_m - stud_z0_m)
+            studs = _add_studs_along_segment(
+                storey=garage_level,
+                name_prefix=f"Garage Stud S{i}",
+                p1=p1,
+                p2=p2,
+                elevation_m=stud_z0_m,
+                height_m=stud_h_m,
+                sheathing_thk_m=zip_r_m,
+                stud_thk_m=stud_thk_m,
+                stud_depth_m=stud_m,
+                spacing_m=inch(spec.framing_spacing_in),
+                skip_ranges_m=skip,
+                positions_m=positions,
+                predefined_type="STUD",
+                ifc_class="IfcMember",
+                material="SPF",
+            )
+            for stud in studs:
+                assign_surface_style(f, element=stud, style=framing_wood_style)
+            garage_wall_studs.extend(studs)
+
+            stud_wall = _add_elemented_wall_container(
+                storey=garage_level,
+                name=f"Garage Stud Wall {i}",
+                p1=p1,
+                p2=p2,
+                elevation_m=wood_wall_elev_m,
+            )
+            ifcopenshell.api.run("aggregate.assign_object", f, products=studs, relating_object=stud_wall)
+            assign_to_group(f, group=groups["Framing"], products=[stud_wall])
+            openings: list[dict[str, float | str]] = []
+            if wall_is_west and wood_opening_h > 0:
+                openings.append(
+                    {
+                        "kind": "DOOR",
+                        "start_in": float(door_side_offset_m) / inch(1.0),
+                        "width_in": float(door_width_m) / inch(1.0),
+                        "height_in": float(door_height_m) / inch(1.0),
+                        "sill_height_in": float(door_bottom_elev_m) / inch(1.0),
+                    }
+                )
+            set_pset_json(
+                f,
+                product=stud_wall,
+                pset_name="Pset_ifcPlot_Framing",
+                prop_name="FramingJSON",
+                value={
+                    "kind": "GarageStudWall",
+                    "segment_index": i,
+                    "bearing": False,
+                    "segment_length_in": float(length) / inch(1.0),
+                    "stud_spacing_in": float(spec.framing_spacing_in),
+                    "stud_depth_in": float(stud_m) / inch(1.0),
+                    "stud_thickness_in": 1.5,
+                    "plates": {"thickness_in": 1.5, "bottom_count": 1, "top_count": 2} if include_wall_plates else None,
+                    "drywall_in": float(garage_wall.drywall_in),
+                    "openings": openings,
+                },
+            )
+            if include_wall_plates:
+                plate_thk_m = inch(1.5)
+                bottom = _add_plate_between_points(
+                    storey=garage_level,
+                    name=f"Garage Plate Bottom {i}",
+                    p1=p1,
+                    p2=p2,
+                    z_center_m=float(wood_wall_elev_m + plate_thk_m / 2.0),
+                    sheathing_thk_m=zip_r_m,
+                    plate_depth_m=stud_m,
+                    plate_thk_m=plate_thk_m,
+                )
+                top1 = _add_plate_between_points(
+                    storey=garage_level,
+                    name=f"Garage Plate Top 1 {i}",
+                    p1=p1,
+                    p2=p2,
+                    z_center_m=float(wood_wall_elev_m + wood_wall_h_m - 1.5 * plate_thk_m),
+                    sheathing_thk_m=zip_r_m,
+                    plate_depth_m=stud_m,
+                    plate_thk_m=plate_thk_m,
+                )
+                top2 = _add_plate_between_points(
+                    storey=garage_level,
+                    name=f"Garage Plate Top 2 {i}",
+                    p1=p1,
+                    p2=p2,
+                    z_center_m=float(wood_wall_elev_m + wood_wall_h_m - plate_thk_m / 2.0),
+                    sheathing_thk_m=zip_r_m,
+                    plate_depth_m=stud_m,
+                    plate_thk_m=plate_thk_m,
+                )
+                ifcopenshell.api.run("aggregate.assign_object", f, products=[bottom, top1, top2], relating_object=stud_wall)
+                scope_key = "Garage walls"
+                bom["scopes"]["plates"][scope_key] = int(bom["scopes"]["plates"].get(scope_key, 0)) + 3
         
         # Outward layers
         outward_offset = 0.0
@@ -2285,6 +3109,11 @@ def build_catlin_house_ifc(
     assign_to_group(f, group=groups["Framing"], products=[*garage_wall_zip_r, *garage_wall_studs])
     assign_to_group(f, group=groups["Drywall"], products=garage_wall_drywall)
     assign_to_group(f, group=groups["Cladding"], products=[*garage_wall_rainscreen, *garage_wall_metal])
+    if include_wall_studs:
+        studs_group = ifcopenshell.api.run("group.add_group", f, name="Garage Wall Studs")
+        assign_to_group(f, group=studs_group, products=garage_wall_studs)
+        scope_key = "Garage walls"
+        bom["scopes"]["studs"][scope_key] = int(bom["scopes"]["studs"].get(scope_key, 0)) + len(garage_wall_studs)
 
     # Garage roof prism (placeholder).
     g_overhang_m = inch(spec.garage_overhang_in)
@@ -2371,6 +3200,16 @@ def build_catlin_house_ifc(
         prop_name="ParamsJSON",
         value=garage_detail_params,
     )
+
+    set_pset_json(
+        f,
+        product=project,
+        pset_name="Pset_ifcPlot_BOM",
+        prop_name="SummaryJSON",
+        value=bom,
+    )
+    if print_bom:
+        print(json.dumps(bom, sort_keys=True, indent=2))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     f.write(str(out_path))

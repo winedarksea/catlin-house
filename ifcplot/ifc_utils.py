@@ -391,10 +391,19 @@ def add_rect_member_between_points(
     member = ifcopenshell.api.run("root.create_entity", f, ifc_class=ifc_class, predefined_type=predefined_type, name=name)
     ifcopenshell.api.run("spatial.assign_container", f, products=[member], relating_structure=storey)
 
-    # Create profile with explicit position at origin for proper rendering
+    # Create profile with explicit position at origin for proper rendering.
+    # NOTE: IfcOpenShell's project units default to millimeters; our inputs are in SI meters.
+    # Because we create the profile entity directly (not via an API helper), we must convert
+    # the section dimensions into the project's length unit.
+    unit_scale = ifcopenshell.util.unit.calculate_unit_scale(f)  # project units → meters
+    if unit_scale <= 0:
+        raise ValueError("Invalid IFC unit scale")
+    width_u = float(width) / float(unit_scale)
+    depth_u = float(depth) / float(unit_scale)
+
     profile_origin = f.createIfcCartesianPoint((0.0, 0.0))
     profile_position = f.createIfcAxis2Placement2D(profile_origin, None)
-    profile = f.createIfcRectangleProfileDef("AREA", None, profile_position, float(width), float(depth))
+    profile = f.createIfcRectangleProfileDef("AREA", None, profile_position, width_u, depth_u)
     
     representation = ifcopenshell.api.run(
         "geometry.add_profile_representation",

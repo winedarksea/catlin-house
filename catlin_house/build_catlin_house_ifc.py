@@ -17,7 +17,7 @@ from ifcplot.catlin_house import build_catlin_house_ifc
 
 def main() -> None:
     out_path = Path("catlin_house/out/catlin_house.ifc")
-    build_catlin_house_ifc(out_path=out_path)
+    build_catlin_house_ifc(out_path=out_path, print_bom=True)
     print(out_path)
 
 

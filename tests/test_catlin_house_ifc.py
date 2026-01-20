@@ -160,3 +160,59 @@ def test_roof_and_gables_have_expected_absolute_placements(tmp_path) -> None:
     # House roof + gables are placed at the attic elevation (18').
     assert float(m_house[2, 3]) == pytest.approx(ft(18.0) * 1000.0, abs=1e-6)
     assert float(m_gable[2, 3]) == pytest.approx(ft(18.0) * 1000.0, abs=1e-6)
+
+
+def test_project_has_bom_pset_json(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    project = f.by_type("IfcProject")[0]
+    psets = ifcopenshell.util.element.get_psets(project)
+    raw = psets.get("Pset_ifcPlot_BOM", {}).get("SummaryJSON")
+    assert raw
+
+    bom = json.loads(raw)
+    assert bom["studs"]["total"] > 0
+    assert bom["joists"]["total"] > 0
+
+
+def test_joists_have_nonzero_swept_solid_section(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    joist = next(e for e in f.by_type("IfcBeam") if e.Name == "House Second Floor Joist W-01")
+    rep = joist.Representation.Representations[0]
+    assert rep.RepresentationIdentifier == "Body"
+    assert rep.RepresentationType == "SweptSolid"
+    solid = rep.Items[0]
+    assert solid.is_a("IfcExtrudedAreaSolid")
+    profile = solid.SweptArea
+    assert profile.is_a("IfcRectangleProfileDef")
+    # Project length units are millimeters; section dims should be O(10..1000), not ~0.
+    assert float(profile.XDim) > 1.0
+    assert float(profile.YDim) > 1.0
+
+
+def test_studs_decompose_stud_wall_containers(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    wall = next(w for w in f.by_type("IfcWall") if w.Name == "House Main Stud Wall 1")
+    assert wall.IsDecomposedBy
+    rel = wall.IsDecomposedBy[0]
+    parts = rel.RelatedObjects
+    assert any(p.is_a("IfcMember") for p in parts)
+
+
+def test_joists_decompose_floor_framing_assembly(tmp_path) -> None:
+    out_path = tmp_path / "catlin_house.ifc"
+    build_catlin_house_ifc(out_path=out_path)
+
+    f = ifcopenshell.open(str(out_path))
+    asm = next(a for a in f.by_type("IfcElementAssembly") if a.Name == "House Second Floor Framing")
+    assert asm.IsDecomposedBy
+    parts = asm.IsDecomposedBy[0].RelatedObjects
+    assert any(p.is_a("IfcBeam") and p.Name and p.Name.startswith("House Second Floor Joist") for p in parts)

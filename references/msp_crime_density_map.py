@@ -11,6 +11,11 @@ There is possibly a cost to the city of making these API calls, so don't run it 
 Reporting bias is definite
 https://communitycrimemap.com/ doesn't have all communities, for example I think it has Ramsey County police reports but not City of St Paul
 Main surbuban crime area not shown is Brooklyn Park and surrounding commmunities there, and South St Paul and West St Paul
+St Paul might have some gaps where geocoder is failing consistently on that street
+
+Advantages: the fixed meters of influence density map, not per polygons
+using violence and theft separately
+not doing per capita
 """
 
 from __future__ import annotations
@@ -110,25 +115,19 @@ DATASETS = {
         "about_url": "https://information.stpaul.gov/datasets/stpaul::crime-incident-report/about",
         "layer_url": "https://services1.arcgis.com/9meaaHE3uiba0zr8/arcgis/rest/services/Crime_Incident_Report_-_Dataset/FeatureServer/0",
         "city_bounds": (-93.25, 44.88, -92.97, 45.02),
-        # No geometry in this service — use district boundaries + random jitter
+        # No point geometry in this service — geocode via BLOCK string + address gazetteer
+        "block_field": "BLOCK",
+        "address_points_layer_url": "https://services1.arcgis.com/9meaaHE3uiba0zr8/arcgis/rest/services/AddressPoints_Active/FeatureServer/0",
+        # District Councils used as last-resort fallback (centroid, not random scatter)
         "neighborhood_layer_url": "https://services1.arcgis.com/9meaaHE3uiba0zr8/arcgis/rest/services/District_Councils/FeatureServer/0",
         "neighborhood_id_field": "districtnumber",
         "record_neighborhood_field": "NEIGHBORHOOD_NUMBER",
         # District_Councils dissolved also serves as the city boundary
         "boundary_layer_url": "https://services1.arcgis.com/9meaaHE3uiba0zr8/arcgis/rest/services/District_Councils/FeatureServer/0",
     },
-    "roseville_crime": {
-        "city": "Roseville",
-        "theme": "crime",
-        "about_url": "https://data-roseville.opendata.arcgis.com/",
-        "layer_url": "https://services3.arcgis.com/dty2kHktVXHrqO8i/arcgis/rest/services/Crime_Incidents/FeatureServer/0",
-        # Roseville sits just north of Saint Paul; clips stray 0,0 sentinel points
-        "city_bounds": (-93.24, 44.97, -93.09, 45.08),
-        # City_Boundary_Line is a polyline layer — fetch_city_boundary will warn and
-        # return None, triggering a concave-hull fallback from the crime point cloud.
-        # If a polygon boundary layer becomes available, substitute it here.
-        "boundary_layer_url": "https://services3.arcgis.com/dty2kHktVXHrqO8i/arcgis/rest/services/City_Boundary_Line/FeatureServer/0",
-    },
+    # Additional cities can be added here following the same pattern.
+    # Edina, Eagan, and Brooklyn Center look like they might have arcgis endpoints
+    # communitycrimemap.com serves most and doesn't have a clear integration right now
 }
 
 # Category matching
@@ -231,6 +230,50 @@ DETAIL_FIELD_CANDIDATES = [
     "StatDesc", "statdesc",
 ]
 
+# ── St Paul block-level geocoder: street-type normalization ─────────────────
+_ST_TYPE_NORM: dict[str, str] = {
+    "AV": "AVE", "AVE": "AVE", "AVENUE": "AVE",
+    "ST": "ST",  "STR": "ST", "STREET": "ST",
+    "BLVD": "BLVD", "BL": "BLVD", "BOULEVARD": "BLVD",
+    "DR": "DR",  "DRIVE": "DR",
+    "CT": "CT",  "CRT": "CT",  "COURT": "CT",
+    "PL": "PL",  "PLACE": "PL",
+    "RD": "RD",  "ROAD": "RD",
+    "LN": "LN",  "LANE": "LN",
+    "TRL": "TRL", "TR": "TRL", "TRAIL": "TRL",
+    "PKWY": "PKWY", "PKW": "PKWY",
+    "CIR": "CIR", "CIRCLE": "CIR",
+    "HWY": "HWY", "HIGHWAY": "HWY",
+    "TER": "TER", "TERR": "TER", "TERRACE": "TER",
+    "WAY": "WAY", "WY": "WAY",
+    "XING": "XING", "CROSSING": "XING",
+    "PLZ": "PLAZA", "PLAZA": "PLAZA",
+    "PASS": "PASS", "PATH": "PATH",
+    "WALK": "WALK", "WK": "WALK",
+    "LOOP": "LOOP",
+}
+_DIR_TOKENS: frozenset[str] = frozenset({"N", "S", "E", "W", "NE", "NW", "SE", "SW"})
+
+_STPAUL_STREET_TEXT_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    ("CHEROKEEHTS", "CHEROKEE HEIGHTS"),
+    ("OLDSIXTH", "OLD 6TH"),
+    ("OLDSIX", "OLD 6"),
+    ("PTDOUGLAS", "POINT DOUGLAS"),
+    ("DOROTHYDAY", "DOROTHY DAY"),
+    ("RIVERPARK", "RIVER PARK"),
+    ("LAFAYETTEFRONTAGE", "LAFAYETTE FRNTGE"),
+    ("FRONTAGE", "FRNTGE"),
+    ("MARTINLUTHERKING", "MARTIN LUTHER KING"),
+)
+
+# "184X WORDSWORTH AV" → group 1="184", group 2="X", group 3="WORDSWORTH AV"
+# "18XX RICE ST"       → group 1="18",  group 2="XX" (decade = 18 * 100 = 1800)
+_BLOCK_ADDR_RE = re.compile(r"^(\d+)(X+)\s+(.+)$", re.IGNORECASE)
+# "XX 4TH ST E" or "X 6 ST W" → unknown house number on a known street
+_BLOCK_UNKNOWN_NUM_RE = re.compile(r"^(X+)\s+(.+)$", re.IGNORECASE)
+# "CASE AV & EDGERTON" or "RICE ST AND WINNIPEG"
+_INTER_RE = re.compile(r"^(.+?)\s+(?:&|AND)\s+(.+)$", re.IGNORECASE)
+
 # Additional text fields used for robust cross-source categorization.
 # All matching fields are concatenated into _all_text before category matching.
 TEXT_FIELD_CANDIDATES = [
@@ -248,6 +291,9 @@ TEXT_FIELD_CANDIDATES = [
 
 # Reasonable projection for local maps
 PROJECT_CRS = "EPSG:3857"
+STPAUL_GEOCODE_CACHE_VERSION = 3
+STPAUL_ADDR_CACHE_VERSION = 2
+STPAUL_MAX_ALLOWED_TIER = 6
 
 
 # =========================
@@ -489,21 +535,11 @@ def prepare_gdf(df: pd.DataFrame, require_geometry: bool = True, city_bounds: tu
     return gdf, info
 
 
-def assign_coords_from_neighborhood(
-    gdf: gpd.GeoDataFrame,
+def _fetch_neighborhood_poly_map(
     neighborhood_layer_url: str,
     neighborhood_id_field: str,
-    record_neighborhood_field: str,
-    rng_seed: int = 42,
-) -> gpd.GeoDataFrame:
-    """
-    For datasets with no point geometry, fetch district/neighborhood polygons,
-    then place each crime at a random point within its district polygon.
-    This gives a reasonable approximation for KDE density maps.
-    """
-    print(f"  No point geometry found — fetching neighborhood boundaries for coordinate fallback…")
-    # Fetch polygon geometry directly as GeoJSON in a single call.
-    poly_map: dict[int, object] = {}
+) -> dict[int, object]:
+    """Fetch district/neighborhood polygons and return {int_id: shapely_geom}."""
     meta = get_layer_metadata(neighborhood_layer_url)
     max_rc = min(meta.get("maxRecordCount", 1000), 2000)
     params = {
@@ -518,13 +554,32 @@ def assign_coords_from_neighborhood(
     r = requests.get(f"{neighborhood_layer_url}/query", params=params, timeout=60)
     r.raise_for_status()
     nb_poly_gdf = gpd.GeoDataFrame.from_features(r.json()["features"], crs="EPSG:4326")
-    nb_poly_gdf[neighborhood_id_field] = pd.to_numeric(nb_poly_gdf[neighborhood_id_field], errors="coerce").astype("Int64")
-
+    nb_poly_gdf[neighborhood_id_field] = pd.to_numeric(
+        nb_poly_gdf[neighborhood_id_field], errors="coerce"
+    ).astype("Int64")
+    poly_map: dict[int, object] = {}
     for _, row in nb_poly_gdf.iterrows():
         nb_id_val = row[neighborhood_id_field]
         if pd.isna(nb_id_val):
             continue
         poly_map[int(nb_id_val)] = row.geometry
+    return poly_map
+
+
+def assign_coords_from_neighborhood(
+    gdf: gpd.GeoDataFrame,
+    neighborhood_layer_url: str,
+    neighborhood_id_field: str,
+    record_neighborhood_field: str,
+    rng_seed: int = 42,
+) -> gpd.GeoDataFrame:
+    """
+    For datasets with no point geometry, fetch district/neighborhood polygons,
+    then place each crime at a random point within its district polygon.
+    This gives a reasonable approximation for KDE density maps.
+    """
+    print(f"  No point geometry found — fetching neighborhood boundaries for coordinate fallback…")
+    poly_map = _fetch_neighborhood_poly_map(neighborhood_layer_url, neighborhood_id_field)
 
     # Assign random points within each district polygon
     rng = np.random.default_rng(rng_seed)
@@ -593,6 +648,548 @@ def assign_coords_from_neighborhood(
     return gdf
 
 
+# ── St Paul block-level geocoder ─────────────────────────────────────────────
+
+def _ordinal_token(n: str) -> str:
+    value = int(n)
+    if 10 <= value % 100 <= 20:
+        suffix = "TH"
+    else:
+        suffix = {1: "ST", 2: "ND", 3: "RD"}.get(value % 10, "TH")
+    return f"{value}{suffix}"
+
+
+def _normalize_street_text(s: str) -> str:
+    """
+    Normalize Saint Paul-specific BLOCK street text into gazetteer-like form.
+    """
+    s = " ".join(str(s).upper().split())
+    for src, dst in _STPAUL_STREET_TEXT_REPLACEMENTS:
+        s = s.replace(src, dst)
+    parts = s.split()
+    if parts and parts[-1] == "LNDG":
+        parts[-1] = "LN"
+    if len(parts) == 1 and parts[0].isdigit():
+        parts[0] = _ordinal_token(parts[0])
+    return " ".join(parts)
+
+
+def _norm_street_tokens(s: str) -> tuple[str, str | None, str | None]:
+    """
+    Parse a street string into (name_upper, type_norm, direction).
+
+    "WORDSWORTH AV"  → ("WORDSWORTH", "AVE", None)
+    "GRANDHILL ST W" → ("GRANDHILL",  "ST",  "W")
+    "N ROBERT ST"    → ("ROBERT",     "ST",  "N")
+    """
+    tokens = _normalize_street_text(s).split()
+    direction: str | None = None
+    type_norm: str | None = None
+    # Direction may be a trailing token ("GRANDHILL ST W") or leading ("N ROBERT ST")
+    if tokens and tokens[-1] in _DIR_TOKENS:
+        direction = tokens.pop()
+    if tokens and tokens[0] in _DIR_TOKENS:
+        direction = tokens.pop(0)
+    # Street type is the last remaining token
+    if tokens and tokens[-1] in _ST_TYPE_NORM:
+        type_norm = _ST_TYPE_NORM[tokens.pop()]
+    name = " ".join(tokens)
+    return name, type_norm, direction
+
+
+def _parse_block_str(block: str) -> tuple | None:
+    """
+    Parse a BLOCK string into structured form.
+
+    Returns one of:
+      ("block",        decade_start, name, type_norm, direction)
+      ("street_only",  name, type_norm, direction)
+      ("intersection", (name_a, type_a, dir_a), (name_b, type_b, dir_b))
+      None  — unparseable
+    """
+    block = block.strip().upper()
+
+    # Intersection check first: contains "&" or "AND"
+    m = _INTER_RE.match(block)
+    if m:
+        a = _norm_street_tokens(m.group(1).strip())
+        b = _norm_street_tokens(m.group(2).strip())
+        if a[0] and b[0]:
+            return ("intersection", a, b)
+
+    # Block address: leading digits + X(s) + space + street
+    m = _BLOCK_ADDR_RE.match(block)
+    if m:
+        # Number of X's determines the decade magnitude:
+        #   "184X"  → 184 * 10^1 = 1840
+        #   "18XX"  → 18  * 10^2 = 1800  (full hundred-block)
+        decade_start = int(m.group(1)) * (10 ** len(m.group(2)))
+        name, type_norm, direction = _norm_street_tokens(m.group(3))
+        if name:
+            return ("block", decade_start, name, type_norm, direction)
+
+    # Unknown house number, but the street still has geocoding value.
+    m = _BLOCK_UNKNOWN_NUM_RE.match(block)
+    if m:
+        name, type_norm, direction = _norm_street_tokens(m.group(2))
+        if name:
+            return ("street_only", name, type_norm, direction)
+
+    return None
+
+
+def _mean_coord(pts: list[tuple[float, float]]) -> tuple[float, float]:
+    lons = [p[0] for p in pts]
+    lats = [p[1] for p in pts]
+    return (sum(lons) / len(lons), sum(lats) / len(lats))
+
+
+def _street_name_aliases(name: str) -> tuple[str, ...]:
+    """
+    Return equivalent lookup keys for Saint Paul street names.
+
+    Crime BLOCK strings often collapse spaces present in the address gazetteer:
+    "STALBANS" vs "ST ALBANS", "OLDSIXTH" vs "OLD SIXTH",
+    "MARTINLUTHERKING" vs "MARTIN LUTHER KING".
+    """
+    name = _normalize_street_text(name)
+    if not name:
+        return ()
+    collapsed = re.sub(r"[^A-Z0-9]", "", name)
+    aliases = [name]
+    if collapsed and collapsed != name:
+        aliases.append(collapsed)
+    if "MARTIN LUTHER KING" in name:
+        aliases.extend(["MARTIN LUTHER KING", "MARTINLUTHERKING"])
+    return tuple(dict.fromkeys(aliases))
+
+
+def _coords_look_like_wgs84(df: pd.DataFrame) -> bool:
+    """
+    Sanity-check cached point coordinates before reusing them.
+
+    Older Saint Paul address-point caches may contain projected coordinates
+    from a previous geocoder build. Reusing them silently breaks matching.
+    """
+    if df.empty or "_lon" not in df.columns or "_lat" not in df.columns:
+        return False
+    sample = df[["_lon", "_lat"]].dropna()
+    if sample.empty:
+        return False
+    sample = sample.head(500)
+    return (
+        sample["_lon"].between(-180, 180).all()
+        and sample["_lat"].between(-90, 90).all()
+    )
+
+
+def build_stpaul_addr_index(addr_layer_url: str, force: bool = False) -> dict:
+    """
+    Download AddressPoints_Active once, cache to parquet, then build four
+    in-memory lookup tables used by geocode_stpaul_blocks:
+
+      main[(name, type_norm)]         → {decade: [(lon, lat), …]}
+      main_dir[(name, type_norm, direction)] → {decade: [(lon, lat), …]}
+      name_only[name]                 → {decade: [(lon, lat), …]}
+      cross[frozenset({name_a,name_b})] → [(lon, lat), …]   (from PROPCROSSSTREET)
+    """
+    cache_path = _cache_path("stp_addr_points")
+
+    if not force and os.path.exists(cache_path):
+        addr_df = pd.read_parquet(cache_path)
+        required_cols = {
+            "PROPHOUSENUMERIC",
+            "PROPSTREETUPPER",
+            "PROPSTREETTYPE",
+            "PROPSTREETDIRECTION",
+            "PROPCROSSSTREET",
+            "_lon",
+            "_lat",
+            "_stp_addr_cache_version",
+        }
+        missing_cols = required_cols - set(addr_df.columns)
+        versions = pd.to_numeric(addr_df.get("_stp_addr_cache_version"), errors="coerce")
+        bad_version = versions.isna().any() or int(versions.min()) != STPAUL_ADDR_CACHE_VERSION
+        if missing_cols or bad_version or not _coords_look_like_wgs84(addr_df):
+            reason = (
+                f"missing columns {sorted(missing_cols)}"
+                if missing_cols
+                else (
+                    f"cache version is outdated (found {sorted(set(versions.dropna().astype(int)))}; "
+                    f"need {STPAUL_ADDR_CACHE_VERSION})"
+                    if bad_version
+                    else "cached coordinates are not valid EPSG:4326 lon/lat"
+                )
+            )
+            warnings.warn(
+                f"Discarding stale Saint Paul address cache {cache_path}: {reason}."
+            )
+            addr_df = None
+        else:
+            age_days = (
+                datetime.now(timezone.utc)
+                - datetime.fromtimestamp(os.path.getmtime(cache_path), tz=timezone.utc)
+            ).days
+            print(f"  Loaded {len(addr_df):,} address points from cache ({age_days}d old)")
+    else:
+        addr_df = None
+
+    if addr_df is None:
+        print("  Downloading AddressPoints_Active…")
+        meta = get_layer_metadata(addr_layer_url)
+        max_rc = min(meta.get("maxRecordCount", 1000), 2000)
+        count_data = arcgis_json(
+            f"{addr_layer_url}/query", {"where": "1=1", "returnCountOnly": "true"}
+        )
+        total = count_data["count"]
+        print(f"  Fetching {total:,} address points (page {max_rc})…")
+
+        rows: list[dict] = []
+        offset = 0
+        while offset < total:
+            params = {
+                "where": "1=1",
+                "outFields": "PROPHOUSENUMERIC,PROPSTREETUPPER,PROPSTREETTYPE,"
+                             "PROPSTREETDIRECTION,PROPCROSSSTREET",
+                "returnGeometry": "true",
+                "outSR": 4326,
+                "resultOffset": offset,
+                "resultRecordCount": max_rc,
+                "f": "json",
+            }
+            data = arcgis_json(f"{addr_layer_url}/query", params)
+            feats = data.get("features", [])
+            if not feats:
+                break
+            for feat in feats:
+                attrs = feat.get("attributes", {}).copy()
+                geom = feat.get("geometry") or {}
+                attrs["_lon"] = geom.get("x")
+                attrs["_lat"] = geom.get("y")
+                rows.append(attrs)
+            offset += len(feats)
+            print(f"    {offset:,}/{total:,}")
+
+        addr_df = pd.DataFrame(rows)
+        addr_df["_stp_addr_cache_version"] = STPAUL_ADDR_CACHE_VERSION
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        addr_df.to_parquet(cache_path)
+        print(f"  Cached {len(addr_df):,} address points → {cache_path}")
+
+    # Build lookup tables
+    main: dict = {}       # (name, type_norm) → {decade → [(lon, lat)]}
+    main_dir: dict = {}   # (name, type_norm, direction) → {decade → [(lon, lat)]}
+    name_only: dict = {}  # name → {decade → [(lon, lat)]}
+    cross: dict = {}      # frozenset({name_a, name_b}) → [(lon, lat)]
+
+    # Use dict-like row access here: pandas namedtuples rename underscore-prefixed
+    # columns such as "_lon"/"_lat" to positional placeholders ("_5", "_6"), which
+    # makes getattr(row, "_lon") silently fail and empties the entire address index.
+    for row in addr_df[[
+        "PROPHOUSENUMERIC",
+        "PROPSTREETUPPER",
+        "PROPSTREETTYPE",
+        "PROPSTREETDIRECTION",
+        "PROPCROSSSTREET",
+        "_lon",
+        "_lat",
+    ]].to_dict("records"):
+        lon = row.get("_lon")
+        lat = row.get("_lat")
+        if pd.isna(lon) or pd.isna(lat):
+            continue
+
+        raw_name = str(row.get("PROPSTREETUPPER", "") or "").strip().upper()
+        raw_type = str(row.get("PROPSTREETTYPE", "") or "").strip().upper()
+        raw_dir  = str(row.get("PROPSTREETDIRECTION", "") or "").strip().upper()
+        house_num = row.get("PROPHOUSENUMERIC")
+        cross_str = str(row.get("PROPCROSSSTREET", "") or "").strip().upper()
+
+        if not raw_name or house_num is None:
+            continue
+        try:
+            house_int = int(house_num)
+        except (ValueError, TypeError):
+            continue
+
+        type_norm = _ST_TYPE_NORM.get(raw_type, raw_type) if raw_type else None
+        decade = (house_int // 10) * 10
+        coord = (float(lon), float(lat))
+
+        for name_key in _street_name_aliases(raw_name):
+            # Main index: name + normalized type
+            key_full = (name_key, type_norm)
+            main.setdefault(key_full, {}).setdefault(decade, []).append(coord)
+
+            # Direction-aware index: name + type + direction (T0 lookup)
+            if raw_dir in _DIR_TOKENS:
+                key_dir = (name_key, type_norm, raw_dir)
+                main_dir.setdefault(key_dir, {}).setdefault(decade, []).append(coord)
+
+            # Name-only fallback (handles type mismatches between crime and address data)
+            name_only.setdefault(name_key, {}).setdefault(decade, []).append(coord)
+
+        # Cross-street index from PROPCROSSSTREET field
+        if cross_str:
+            cross_name, _, _ = _norm_street_tokens(cross_str)
+            if cross_name:
+                for raw_alias in _street_name_aliases(raw_name):
+                    for cross_alias in _street_name_aliases(cross_name):
+                        cross.setdefault(frozenset([raw_alias, cross_alias]), []).append(coord)
+
+    n_main = sum(len(v) for decades in main.values() for v in decades.values())
+    print(f"  Address index built: {len(main):,} street keys, {n_main:,} points, "
+          f"{len(cross):,} cross-street pairs.")
+    return {"main": main, "main_dir": main_dir, "name_only": name_only, "cross": cross}
+
+
+def geocode_stpaul_blocks(
+    gdf: gpd.GeoDataFrame,
+    block_field: str,
+    addr_index: dict,
+    nb_poly_map: dict[int, object] | None = None,
+    nb_field: str | None = None,
+    rng_seed: int = 42,
+) -> gpd.GeoDataFrame:
+    """
+    Assign precise coordinates to St Paul crime records from BLOCK strings.
+
+    Precision tiers (applied in order, first match wins):
+      Block addresses ("184X WORDSWORTH AV"):
+        T1 — exact decade + name + type  (~30 m)
+        T2 — exact decade + name only    (~30 m, handles AV/AVE mismatches)
+        T3 — full hundred-block + name + type  (~80 m)
+        T4 — full hundred-block + name only    (~80 m)
+      Unknown-number block strings ("XX 4TH ST E"):
+        T8 — street-level mean by name/type/dir (~corridor scale)
+      Intersections ("CASE AV & EDGERTON"):
+        T5 — PROPCROSSSTREET index (direct corner match)  (~30 m)
+        T6 — nearest-pair between the two streets          (~100 m)
+      Last resort (no random scatter):
+        T7 — district-council centroid + ≤100 m jitter  (logged, counted)
+      Unresolved:
+        dropped and counted
+
+    Never uses large-polygon random scatter.
+    """
+    rng = np.random.default_rng(rng_seed)
+    gdf = gdf.copy()
+    n = len(gdf)
+    lons = np.full(n, np.nan)
+    lats = np.full(n, np.nan)
+    tiers = np.full(n, -1, dtype=np.int8)
+
+    blocks = gdf[block_field].fillna("").astype(str).values
+
+    # Cache nearest-pair results per unique intersection string to avoid recomputing
+    _inter_cache: dict[tuple, tuple | None] = {}
+
+    for i, raw in enumerate(blocks):
+        if not raw or raw.upper() in ("NAN", "NONE", ""):
+            continue
+
+        parsed = _parse_block_str(raw)
+        if parsed is None:
+            continue
+
+        coord: tuple[float, float] | None = None
+        tier = -1
+
+        if parsed[0] == "block":
+            _, decade, name, type_norm, _dir = parsed
+            main = addr_index["main"]
+            main_dir = addr_index.get("main_dir", {})
+            nonly = addr_index["name_only"]
+
+            # T0: exact decade + name + type + direction (most precise)
+            if coord is None and type_norm and _dir:
+                key = (name, type_norm, _dir)
+                if key in main_dir and decade in main_dir[key]:
+                    coord = _mean_coord(main_dir[key][decade])
+                    tier = 0
+
+            # T1: exact decade, full key
+            if coord is None and type_norm:
+                key = (name, type_norm)
+                if key in main and decade in main[key]:
+                    coord = _mean_coord(main[key][decade])
+                    tier = 1
+
+            # T2: exact decade, name-only
+            if coord is None and name in nonly and decade in nonly[name]:
+                coord = _mean_coord(nonly[name][decade])
+                tier = 2
+
+            # T3: full hundred-block, full key
+            if coord is None and type_norm:
+                key = (name, type_norm)
+                if key in main:
+                    hbase = (decade // 100) * 100
+                    nearby = [
+                        pt
+                        for d in range(hbase, hbase + 100, 10)
+                        for pt in main[key].get(d, [])
+                    ]
+                    if nearby:
+                        coord = _mean_coord(nearby)
+                        tier = 3
+
+            # T4: full hundred-block, name-only
+            if coord is None and name in nonly:
+                hbase = (decade // 100) * 100
+                nearby = [
+                    pt
+                    for d in range(hbase, hbase + 100, 10)
+                    for pt in nonly[name].get(d, [])
+                ]
+                if nearby:
+                    coord = _mean_coord(nearby)
+                    tier = 4
+
+        elif parsed[0] == "street_only":
+            _, name, type_norm, _dir = parsed
+            main = addr_index["main"]
+            main_dir = addr_index.get("main_dir", {})
+            nonly = addr_index["name_only"]
+
+            # Unknown block number: use the street-level mean before district fallback.
+            if coord is None and type_norm and _dir:
+                key = (name, type_norm, _dir)
+                if key in main_dir:
+                    pts = [pt for pts in main_dir[key].values() for pt in pts]
+                    if pts:
+                        coord = _mean_coord(pts)
+                        tier = 8
+
+            if coord is None and type_norm:
+                key = (name, type_norm)
+                if key in main:
+                    pts = [pt for pts in main[key].values() for pt in pts]
+                    if pts:
+                        coord = _mean_coord(pts)
+                        tier = 8
+
+            if coord is None and name in nonly:
+                pts = [pt for pts in nonly[name].values() for pt in pts]
+                if pts:
+                    coord = _mean_coord(pts)
+                    tier = 8
+
+        elif parsed[0] == "intersection":
+            _, (name_a, _ta, _da), (name_b, _tb, _db) = parsed
+
+            # T5: PROPCROSSSTREET index
+            xkey = frozenset([name_a, name_b])
+            if xkey in addr_index["cross"]:
+                coord = _mean_coord(addr_index["cross"][xkey])
+                tier = 5
+
+            # T6: nearest-pair between the two streets (vectorized, cached)
+            if coord is None:
+                cache_key = (min(name_a, name_b), max(name_a, name_b))
+                if cache_key not in _inter_cache:
+                    nonly = addr_index["name_only"]
+                    pts_a = [pt for pts in nonly.get(name_a, {}).values() for pt in pts]
+                    pts_b = [pt for pts in nonly.get(name_b, {}).values() for pt in pts]
+                    if pts_a and pts_b:
+                        arr_a = np.array(pts_a)
+                        arr_b = np.array(pts_b)
+                        # Subsample if too large to keep tractable
+                        if len(arr_a) * len(arr_b) > 500_000:
+                            arr_a = arr_a[::max(1, len(arr_a) // 700)]
+                            arr_b = arr_b[::max(1, len(arr_b) // 700)]
+                        diff = arr_a[:, None, :] - arr_b[None, :, :]
+                        dist2 = (diff ** 2).sum(axis=2)
+                        idx = np.unravel_index(dist2.argmin(), dist2.shape)
+                        _inter_cache[cache_key] = (
+                            (arr_a[idx[0], 0] + arr_b[idx[1], 0]) / 2.0,
+                            (arr_a[idx[0], 1] + arr_b[idx[1], 1]) / 2.0,
+                        )
+                    else:
+                        _inter_cache[cache_key] = None
+                result = _inter_cache[cache_key]
+                if result is not None:
+                    coord = result
+                    tier = 6
+
+        if coord is not None:
+            lons[i] = coord[0]
+            lats[i] = coord[1]
+            tiers[i] = tier
+
+    # T7: district centroid + tiny jitter (≤100 m) as last resort — no large scatter
+    unresolved = np.isnan(lons)
+    if nb_poly_map is not None and nb_field is not None and unresolved.any():
+        nb_vals = pd.to_numeric(gdf[nb_field].values, errors="coerce")
+        for nb_id, poly in nb_poly_map.items():
+            mask = unresolved & (nb_vals == nb_id)
+            n_here = int(mask.sum())
+            if n_here == 0 or poly is None:
+                continue
+            cx, cy = poly.centroid.x, poly.centroid.y
+            jitter = 0.0005  # ~45 m at Saint Paul's latitude
+            lons[mask] = cx + rng.uniform(-jitter, jitter, n_here)
+            lats[mask] = cy + rng.uniform(-jitter, jitter, n_here)
+            tiers[mask] = 7
+
+    # Only keep Saint Paul coordinates that are plausibly within ~200 m precision.
+    # T7 district centroids and T8 street-level means are too coarse for the map.
+    keep_mask = (tiers >= 0) & (tiers <= STPAUL_MAX_ALLOWED_TIER)
+    lons[~keep_mask] = np.nan
+    lats[~keep_mask] = np.nan
+
+    # Diagnostics
+    tier_labels = {
+        0: "exact decade + type + dir (~30 m)",
+        1: "exact decade + type   (~30 m)",
+        2: "exact decade, no type (~30 m)",
+        3: "hundred-block + type  (~80 m)",
+        4: "hundred-block, no type (~80 m)",
+        5: "intersection cross-idx (~30 m)",
+        6: "intersection nearest-pair (~100 m)",
+        7: "district centroid ≤100 m jitter (last resort)",
+        8: "street-level mean, unknown house # (~corridor scale)",
+       -1: "unresolved → dropped",
+    }
+    print(f"\n  St Paul block geocoder results (n={n:,}):")
+    for t in [0, 1, 2, 3, 4, 5, 6, 8, 7, -1]:
+        c = int((tiers == t).sum())
+        if c:
+            pct = 100.0 * c / n if n else 0.0
+            print(f"    T{t:+d} {tier_labels[t]}: {c:,} ({pct:.1f}%)")
+
+    n_dropped = int(np.isnan(lons).sum())
+    if n_dropped > 0:
+        unresolved_mask = tiers < 0
+        filtered_mask = (tiers >= 0) & (~keep_mask)
+
+        unresolved_blocks = pd.Series(blocks[unresolved_mask]).value_counts().head(12)
+        if len(unresolved_blocks):
+            print(f"  Unresolved BLOCK strings (top {len(unresolved_blocks)}):")
+            for blk, cnt in unresolved_blocks.items():
+                print(f"    {blk!r}: {cnt:,}")
+
+        filtered_blocks = pd.Series(blocks[filtered_mask]).value_counts().head(12)
+        if len(filtered_blocks):
+            print(f"  Filtered low-precision BLOCK strings (top {len(filtered_blocks)}):")
+            for blk, cnt in filtered_blocks.items():
+                print(f"    {blk!r}: {cnt:,}")
+
+    gdf["_lon"] = lons
+    gdf["_lat"] = lats
+    gdf["_stp_geocode_tier"] = tiers
+    gdf["_stp_geocode_version"] = STPAUL_GEOCODE_CACHE_VERSION
+    gdf = gdf[gdf["_lon"].notna() & gdf["_lat"].notna()].copy()
+    gdf = gpd.GeoDataFrame(
+        gdf,
+        geometry=gpd.points_from_xy(gdf["_lon"], gdf["_lat"]),
+        crs="EPSG:4326",
+    )
+    resolved = len(gdf)
+    print(f"  Geocoded {resolved:,}/{n:,} records. Dropped {n - resolved:,}.")
+    return gdf
+
+
 def contains_any(series: pd.Series, terms: list[str]) -> pd.Series:
     pattern = "|".join(re.escape(t) for t in terms)
     return series.str.contains(pattern, case=False, na=False, regex=True)
@@ -653,7 +1250,7 @@ def print_alignment_audit(city_name: str, gdf: gpd.GeoDataFrame, top_n_unmapped:
     mapped_pct = (100.0 * mapped_count / total) if total else 0.0
 
     print(f"\n[{city_name}] canonical alignment audit")
-    print(f"  total incidents (3y): {total:,}")
+    print(f"  total incidents ({YEARS_BACK}y): {total:,}")
     print(f"  violent matched: {violent:,}")
     print(f"  gun matched: {gun:,}")
     print(f"  residential burglary matched: {res_burg:,}")
@@ -758,7 +1355,7 @@ def filter_residential_burglary(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def kde_surface(
     gdf_proj: gpd.GeoDataFrame,
-    gridsize=700,
+    gridsize=1400,
     bandwidth_adjust=1.0,
     bandwidth_meters: float | None = None,
 ):
@@ -1003,16 +1600,37 @@ def load_dataset(cfg_key: str) -> tuple[gpd.GeoDataFrame, dict]:
     layer_url = get_layer_url(cfg)
     print(f"\n[{cfg_key}] using layer: {layer_url}")
 
-    nb_url = cfg.get("neighborhood_layer_url")
-    nb_id = cfg.get("neighborhood_id_field")
-    rec_nb = cfg.get("record_neighborhood_field")
-    has_nb_fallback = bool(nb_url and nb_id and rec_nb)
+    block_field    = cfg.get("block_field")
+    addr_layer_url = cfg.get("address_points_layer_url")
+    nb_url  = cfg.get("neighborhood_layer_url")
+    nb_id   = cfg.get("neighborhood_id_field")
+    rec_nb  = cfg.get("record_neighborhood_field")
+
+    has_block_geocoder = bool(block_field and addr_layer_url)
+    has_nb_fallback    = bool(nb_url and nb_id and rec_nb)
+    needs_geometry_later = has_block_geocoder or has_nb_fallback
 
     city_bounds = cfg.get("city_bounds")
     df = fetch_all_features(layer_url)
-    gdf, info = prepare_gdf(df, require_geometry=not has_nb_fallback, city_bounds=city_bounds)
+    gdf, info = prepare_gdf(df, require_geometry=not needs_geometry_later, city_bounds=city_bounds)
 
-    if has_nb_fallback:
+    if has_block_geocoder:
+        # Build address-point gazetteer (cached to parquet after first download)
+        addr_index = build_stpaul_addr_index(addr_layer_url, force=FORCE_DOWNLOAD)
+        # Fetch district polygons for last-resort centroid fallback (never random scatter)
+        nb_poly_map = None
+        if has_nb_fallback:
+            print("  Fetching district boundaries for centroid fallback…")
+            nb_poly_map = _fetch_neighborhood_poly_map(nb_url, nb_id)
+        gdf = geocode_stpaul_blocks(gdf, block_field, addr_index, nb_poly_map, rec_nb)
+        # Apply city bounds after geocoding (prepare_gdf skipped it with require_geometry=False)
+        if city_bounds is not None and not gdf.empty:
+            min_lon, min_lat, max_lon, max_lat = city_bounds
+            gdf = gdf[
+                gdf["_lon"].between(min_lon, max_lon) &
+                gdf["_lat"].between(min_lat, max_lat)
+            ].copy()
+    elif has_nb_fallback:
         gdf = assign_coords_from_neighborhood(gdf, nb_url, nb_id, rec_nb)
 
     print(f"[{cfg_key}] rows after date/geometry filtering: {len(gdf):,}")
@@ -1037,13 +1655,12 @@ _CACHE_REQUIRED_COLS = {
     "mpls_crime":       {"_date", "_offense_text", "_all_text", "_cat_violent", "_cat_gun",
                          "_cat_residential_burglary", "_cat_generic_burglary"},
     "stp_crime":        {"_date", "_offense_text", "_all_text", "_cat_violent", "_cat_gun",
-                         "_cat_residential_burglary", "_cat_generic_burglary"},
-    "roseville_crime":  {"_date", "_offense_text", "_all_text", "_cat_violent", "_cat_gun",
-                         "_cat_residential_burglary", "_cat_generic_burglary"},
+                         "_cat_residential_burglary", "_cat_generic_burglary",
+                         "_stp_geocode_tier", "_stp_geocode_version"},
     "mpls_shots":       {"_date"},
+    "stp_addr_points":  set(),   # raw address-point table; schema validated by build_stpaul_addr_index
     "boundary_mpls":      set(),
     "boundary_stp":       set(),
-    "boundary_roseville": set(),
 }
 
 
@@ -1061,6 +1678,16 @@ def _load_cache(name: str) -> gpd.GeoDataFrame | None:
             f"Cache {path} is missing columns {missing} — discarding and re-downloading."
         )
         return None
+
+    if name == "stp_crime":
+        versions = pd.to_numeric(gdf["_stp_geocode_version"], errors="coerce")
+        if versions.isna().any() or int(versions.min()) != STPAUL_GEOCODE_CACHE_VERSION:
+            warnings.warn(
+                f"Cache {path} was built with an outdated Saint Paul geocoder version "
+                f"(found {sorted(set(versions.dropna().astype(int)))}; "
+                f"need {STPAUL_GEOCODE_CACHE_VERSION}) — discarding and re-downloading."
+            )
+            return None
 
     # Show age and date range so stale caches are obvious
     mtime = datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc)
@@ -1119,13 +1746,11 @@ def main():
     # City boundaries are small and stable; cache them separately so a fully
     # cached run makes zero crime-data API calls.
     print("\nLoading city boundaries…")
-    mpls_boundary      = None
-    stp_boundary       = None
-    roseville_boundary = None
+    mpls_boundary = None
+    stp_boundary  = None
     if not FORCE_DOWNLOAD:
-        mpls_boundary      = _load_cache("boundary_mpls")
-        stp_boundary       = _load_cache("boundary_stp")
-        roseville_boundary = _load_cache("boundary_roseville")
+        mpls_boundary = _load_cache("boundary_mpls")
+        stp_boundary  = _load_cache("boundary_stp")
 
     if mpls_boundary is None:
         mpls_boundary = fetch_city_boundary(DATASETS["minneapolis_crime"]["boundary_layer_url"])
@@ -1137,14 +1762,6 @@ def main():
         if stp_boundary is not None:
             _save_cache("boundary_stp", stp_boundary)
 
-    if roseville_boundary is None:
-        rv_boundary_url = DATASETS["roseville_crime"].get("boundary_layer_url")
-        if rv_boundary_url:
-            roseville_boundary = fetch_city_boundary(rv_boundary_url)
-            if roseville_boundary is not None:
-                _save_cache("boundary_roseville", roseville_boundary)
-    # If GIS fetch failed, boundary is derived from point hull after crime data loads below.
-
     # Each dataset is fetched/cached independently so a missing cache for one
     # city does not force a re-download of the other.
     print("\nLoading Minneapolis crime data…")
@@ -1153,22 +1770,8 @@ def main():
     print("\nLoading Saint Paul crime data…")
     stp_crime = _fetch_or_cache("stpaul_crime", "stp_crime", FORCE_DOWNLOAD, probe=not using_cache)
 
-    print("\nLoading Roseville crime data…")
-    try:
-        roseville_crime = _fetch_or_cache("roseville_crime", "roseville_crime", FORCE_DOWNLOAD, probe=not using_cache)
-    except Exception as e:
-        warnings.warn(f"Could not load Roseville crime dataset: {e}")
-        roseville_crime = gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
-
-    # Derive Roseville boundary from point hull if not cached yet
-    if roseville_boundary is None and not roseville_crime.empty:
-        roseville_boundary = _hull_boundary(roseville_crime)
-        if roseville_boundary is not None:
-            _save_cache("boundary_roseville", roseville_boundary)
-
     print_alignment_audit("Minneapolis", mpls_crime)
     print_alignment_audit("Saint Paul", stp_crime)
-    print_alignment_audit("Roseville", roseville_crime)
     print_cross_city_alignment_summary(mpls_crime, stp_crime)
 
     # Shots-fired is supplemental; an empty fallback is acceptable if it fails.
@@ -1196,25 +1799,19 @@ def main():
     stp_violent_gun = pd.concat([stp_violent, stp_gun], ignore_index=True)
     stp_violent_gun = gpd.GeoDataFrame(stp_violent_gun, geometry="geometry", crs="EPSG:4326")
 
-    roseville_violent = filter_violent(roseville_crime)
-    roseville_gun = filter_gun(roseville_crime)
-    roseville_violent_gun = pd.concat([roseville_violent, roseville_gun], ignore_index=True)
-    roseville_violent_gun = gpd.GeoDataFrame(roseville_violent_gun, geometry="geometry", crs="EPSG:4326")
-
     # Metro uses crime-reports only (no ShotSpotter) so all cities are equally represented
-    metro_violent_gun = pd.concat([mpls_violent_gun_core, stp_violent_gun, roseville_violent_gun], ignore_index=True)
+    metro_violent_gun = pd.concat([mpls_violent_gun_core, stp_violent_gun], ignore_index=True)
     metro_violent_gun = gpd.GeoDataFrame(metro_violent_gun, geometry="geometry", crs="EPSG:4326")
 
     # Theme 2: residential burglary
-    mpls_burg      = filter_residential_burglary(mpls_crime)
-    stp_burg       = filter_residential_burglary(stp_crime)
-    roseville_burg = filter_residential_burglary(roseville_crime)
+    mpls_burg = filter_residential_burglary(mpls_crime)
+    stp_burg  = filter_residential_burglary(stp_crime)
 
-    metro_burg = pd.concat([mpls_burg, stp_burg, roseville_burg], ignore_index=True)
+    metro_burg = pd.concat([mpls_burg, stp_burg], ignore_index=True)
     metro_burg = gpd.GeoDataFrame(metro_burg, geometry="geometry", crs="EPSG:4326")
 
     # Combined metro boundary — union of all available city boundaries
-    boundary_parts = [b for b in [mpls_boundary, stp_boundary, roseville_boundary] if b is not None]
+    boundary_parts = [b for b in [mpls_boundary, stp_boundary] if b is not None]
     if len(boundary_parts) >= 2:
         metro_boundary = gpd.GeoDataFrame(
             pd.concat(boundary_parts, ignore_index=True),
@@ -1227,14 +1824,12 @@ def main():
 
     # Drop duplicate geometry+date rows after unioning categories
     for name, gdf in {
-        "mpls_violent_gun":      mpls_violent_gun,
-        "stp_violent_gun":       stp_violent_gun,
-        "roseville_violent_gun": roseville_violent_gun,
-        "metro_violent_gun":     metro_violent_gun,
-        "mpls_burg":             mpls_burg,
-        "stp_burg":              stp_burg,
-        "roseville_burg":        roseville_burg,
-        "metro_burg":            metro_burg,
+        "mpls_violent_gun":  mpls_violent_gun,
+        "stp_violent_gun":   stp_violent_gun,
+        "metro_violent_gun": metro_violent_gun,
+        "mpls_burg":         mpls_burg,
+        "stp_burg":          stp_burg,
+        "metro_burg":        metro_burg,
     }.items():
         if not gdf.empty:
             cols = [c for c in ["_date", "_lon", "_lat", "_offense_text", "_detail_text"] if c in gdf.columns]
@@ -1243,25 +1838,21 @@ def main():
                 mpls_violent_gun = deduped
             elif name == "stp_violent_gun":
                 stp_violent_gun = deduped
-            elif name == "roseville_violent_gun":
-                roseville_violent_gun = deduped
             elif name == "metro_violent_gun":
                 metro_violent_gun = deduped
             elif name == "mpls_burg":
                 mpls_burg = deduped
             elif name == "stp_burg":
                 stp_burg = deduped
-            elif name == "roseville_burg":
-                roseville_burg = deduped
             elif name == "metro_burg":
                 metro_burg = deduped
 
     # Metro maps: wider figure, lower basemap zoom for regional context.
     # 500 m bandwidth — slightly wider than single-city to keep hotspots visible
     # at the larger viewing scale without smearing across neighborhoods.
-    METRO_KW = {"figsize": (28, 22), "gridsize": 3000, "bandwidth_meters": 350, "basemap_zoom": 13}
+    METRO_KW = {"figsize": (28, 22), "gridsize": 3000, "bandwidth_meters": 350, "basemap_zoom": 14}
 
-    METRO_TITLE_SUFFIX = "Minneapolis + Saint Paul + Roseville"
+    METRO_TITLE_SUFFIX = "Minneapolis + Saint Paul"
 
     # (gdf, title, outfile, extra_kwargs, city_boundary_gdf)
     outputs = [
